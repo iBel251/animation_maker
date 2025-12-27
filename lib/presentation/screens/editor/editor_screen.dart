@@ -5,6 +5,7 @@ import 'editor_app_bar.dart';
 import 'canvas_area.dart';
 import 'properties_panel.dart';
 import 'timeline_panel.dart';
+import 'editor_view_model.dart';
 
 class EditorScreen extends ConsumerWidget {
   const EditorScreen({super.key});
@@ -13,13 +14,13 @@ class EditorScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     return Scaffold(
       appBar: const EditorAppBar(),
-      body: const SafeArea(
+      body: SafeArea(
         child: Row(
           children: [
-            Expanded(
+            const Expanded(
               child: CanvasArea(),
             ),
-            PropertiesPanel(),
+            const PropertiesPanel(),
           ],
         ),
       ),
