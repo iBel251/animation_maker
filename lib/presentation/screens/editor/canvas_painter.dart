@@ -1,0 +1,2 @@
+// Placeholder: Canvas painter.
+
