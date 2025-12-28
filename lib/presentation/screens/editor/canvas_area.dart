@@ -19,16 +19,48 @@ class CanvasArea extends ConsumerWidget {
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onPanStart: (details) {
-        if (activeTool != EditorTool.brush) return;
-        viewModel.startDrawing(details.localPosition);
+        switch (activeTool) {
+          case EditorTool.brush:
+            viewModel.startDrawing(details.localPosition);
+            break;
+          case EditorTool.shape:
+            viewModel.startShapeDrawing(details.localPosition);
+            break;
+          case EditorTool.select:
+            viewModel.selectAtPoint(details.localPosition);
+            break;
+        }
       },
       onPanUpdate: (details) {
-        if (activeTool != EditorTool.brush) return;
-        viewModel.continueDrawing(details.localPosition);
+        switch (activeTool) {
+          case EditorTool.brush:
+            viewModel.continueDrawing(details.localPosition);
+            break;
+          case EditorTool.shape:
+            viewModel.updateShapeDrawing(details.localPosition);
+            break;
+          case EditorTool.select:
+            viewModel.moveSelectedBy(details.delta);
+            break;
+        }
       },
       onPanEnd: (_) {
-        if (activeTool != EditorTool.brush) return;
-        viewModel.endDrawing();
+        switch (activeTool) {
+          case EditorTool.brush:
+            viewModel.endDrawing();
+            break;
+          case EditorTool.shape:
+            viewModel.finishShapeDrawing();
+            break;
+          case EditorTool.select:
+            viewModel.rebuildQuadTree();
+            break;
+        }
+      },
+      onTapDown: (details) {
+        if (activeTool == EditorTool.select) {
+          viewModel.selectAtPoint(details.localPosition);
+        }
       },
       child: Container(
         width: double.infinity,
@@ -36,15 +68,17 @@ class CanvasArea extends ConsumerWidget {
           color: Colors.grey.shade100,
           border: Border.all(color: Colors.grey.shade400),
         ),
-        child: RepaintBoundary(
-          child: CustomPaint(
-            painter: CanvasPainter(
-              shapes: shapes,
-              selectedShapeId: selectedShapeId,
-            ),
-            child: SizedBox.expand(
-              child: Center(
-                child: Text('Canvas (draw here) — Shapes: ${shapes.length}'),
+        child: ClipRect(
+          child: RepaintBoundary(
+            child: CustomPaint(
+              painter: CanvasPainter(
+                shapes: shapes,
+                selectedShapeId: selectedShapeId,
+              ),
+              child: SizedBox.expand(
+                child: Center(
+                  child: Text('Canvas (draw here) — Shapes: ${shapes.length}'),
+                ),
               ),
             ),
           ),

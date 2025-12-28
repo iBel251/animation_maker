@@ -12,6 +12,7 @@ class CanvasPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    // Shapes are painted in list order; later shapes render on top.
     for (final shape in shapes) {
       final paint = Paint()
         ..color = shape.strokeColor.withOpacity(shape.opacity)
@@ -22,7 +23,10 @@ class CanvasPainter extends CustomPainter {
         case ShapeKind.freehand:
         case ShapeKind.polygon:
         case ShapeKind.line:
-          final path = _buildPath(shape.points);
+          final path = _buildPath(
+            shape.points,
+            closePath: shape.kind == ShapeKind.polygon,
+          );
           if (path != null) {
             canvas.drawPath(path, paint);
             _highlightIfSelected(canvas, path.getBounds(), shape.id);
@@ -46,11 +50,14 @@ class CanvasPainter extends CustomPainter {
     }
   }
 
-  Path? _buildPath(List<Offset> points) {
+  Path? _buildPath(List<Offset> points, {bool closePath = false}) {
     if (points.length < 2) return null;
     final path = Path()..moveTo(points.first.dx, points.first.dy);
     for (var i = 1; i < points.length; i++) {
       path.lineTo(points[i].dx, points[i].dy);
+    }
+    if (closePath && points.length > 2) {
+      path.close();
     }
     return path;
   }
