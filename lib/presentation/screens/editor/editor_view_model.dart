@@ -70,6 +70,7 @@ class EditorViewModel extends Notifier<EditorState> {
   String? _currentDrawingId;
   Offset? _shapeStartPoint;
   Offset? _lastLineEnd;
+  static const double _minPointDistance = 1.5;
 
   void setActiveTool(EditorTool tool) {
     state = state.copyWith(activeTool: tool);
@@ -99,6 +100,63 @@ class EditorViewModel extends Notifier<EditorState> {
 
   void setShapeDrawKind(ShapeKind kind) {
     state = state.copyWith(shapeDrawKind: kind);
+  }
+
+  void updateSelectedStroke({double? strokeWidth, Color? strokeColor}) {
+    final targetId = state.selectedShapeId;
+    if (targetId == null) return;
+    final index = state.shapes.indexWhere((s) => s.id == targetId);
+    if (index == -1) return;
+
+    final target = state.shapes[index];
+    final updated = target.copyWith(
+      strokeWidth: strokeWidth ?? target.strokeWidth,
+      strokeColor: strokeColor ?? target.strokeColor,
+    );
+    final updatedShapes = List<Shape>.from(state.shapes);
+    updatedShapes[index] = updated;
+    _setShapesAndRebuild(updatedShapes, rebuildQuadTree: false);
+  }
+
+  void updateSelectedBounds({
+    double? x,
+    double? y,
+    double? width,
+    double? height,
+  }) {
+    final targetId = state.selectedShapeId;
+    if (targetId == null) return;
+    final index = state.shapes.indexWhere((s) => s.id == targetId);
+    if (index == -1) return;
+
+    final target = state.shapes[index];
+    final existingBounds = target.bounds ?? _shapeBounds(target);
+    if (existingBounds == null) return;
+
+    final newWidth =
+        (width ?? existingBounds.width).clamp(0, double.infinity).toDouble();
+    final newHeight =
+        (height ?? existingBounds.height).clamp(0, double.infinity).toDouble();
+    final newRect = Rect.fromLTWH(
+      x ?? existingBounds.left,
+      y ?? existingBounds.top,
+      newWidth,
+      newHeight,
+    );
+
+    Shape updated;
+    if (target.bounds != null) {
+      updated = target.copyWith(bounds: newRect);
+    } else {
+      final delta = newRect.topLeft - existingBounds.topLeft;
+      final shiftedPoints =
+          target.points.map((p) => p + delta).toList(growable: false);
+      updated = target.copyWith(points: shiftedPoints);
+    }
+
+    final updatedShapes = List<Shape>.from(state.shapes);
+    updatedShapes[index] = updated;
+    _setShapesAndRebuild(updatedShapes);
   }
 
   String _nextShapeId() {
@@ -132,6 +190,13 @@ class EditorViewModel extends Notifier<EditorState> {
     if (index == -1) return;
 
     final target = state.shapes[index];
+    final lastPoint =
+        target.points.isNotEmpty ? target.points.last : null;
+    if (lastPoint != null &&
+        (lastPoint - point).distance < _minPointDistance) {
+      return;
+    }
+
     final updatedPoints = [...target.points, point];
     final updatedShape = target.copyWith(points: updatedPoints);
 
@@ -179,6 +244,12 @@ class EditorViewModel extends Notifier<EditorState> {
         updatedShape = target.copyWith(bounds: rect);
         break;
       case ShapeKind.line:
+        final lastPoint =
+            target.points.isNotEmpty ? target.points.last : null;
+        if (lastPoint != null &&
+            (lastPoint - point).distance < _minPointDistance) {
+          break;
+        }
         updatedShape =
             target.copyWith(points: [_shapeStartPoint!, point]);
         break;
