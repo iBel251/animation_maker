@@ -18,7 +18,7 @@ class PropertiesPanel extends ConsumerWidget {
         ref.watch(editorViewModelProvider.select((state) => state.shapes.length));
 
     return Container(
-      width: 250,
+      width: double.infinity,
       color: Colors.grey.shade100,
       child: SingleChildScrollView(
         child: Padding(

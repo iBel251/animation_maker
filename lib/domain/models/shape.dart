@@ -42,4 +42,32 @@ class Shape {
   final Offset translation;
   final double rotation;
   final double scale;
+
+  Shape copyWith({
+    String? id,
+    ShapeKind? kind,
+    List<Offset>? points,
+    Rect? bounds,
+    Color? strokeColor,
+    double? strokeWidth,
+    Color? fillColor,
+    double? opacity,
+    Offset? translation,
+    double? rotation,
+    double? scale,
+  }) {
+    return Shape(
+      id: id ?? this.id,
+      kind: kind ?? this.kind,
+      points: points ?? this.points.toList(),
+      bounds: bounds ?? this.bounds,
+      strokeColor: strokeColor ?? this.strokeColor,
+      strokeWidth: strokeWidth ?? this.strokeWidth,
+      fillColor: fillColor ?? this.fillColor,
+      opacity: opacity ?? this.opacity,
+      translation: translation ?? this.translation,
+      rotation: rotation ?? this.rotation,
+      scale: scale ?? this.scale,
+    );
+  }
 }

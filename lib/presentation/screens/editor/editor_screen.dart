@@ -17,10 +17,24 @@ class EditorScreen extends ConsumerWidget {
       body: SafeArea(
         child: Row(
           children: [
+            Consumer(
+              builder: (context, ref, _) {
+                final isOpen = ref.watch(
+                  editorViewModelProvider
+                      .select((state) => state.isPropertiesOpen),
+                );
+                return AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  width: isOpen ? 180 : 0,
+                  child: isOpen
+                      ? const PropertiesPanel()
+                      : const SizedBox.shrink(),
+                );
+              },
+            ),
             const Expanded(
               child: CanvasArea(),
             ),
-            const PropertiesPanel(),
           ],
         ),
       ),

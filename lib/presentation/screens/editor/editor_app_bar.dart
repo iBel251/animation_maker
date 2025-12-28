@@ -13,6 +13,9 @@ class EditorAppBar extends ConsumerWidget implements PreferredSizeWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final activeTool =
         ref.watch(editorViewModelProvider.select((state) => state.activeTool));
+    final isPropertiesOpen = ref.watch(
+      editorViewModelProvider.select((state) => state.isPropertiesOpen),
+    );
     final viewModel = ref.read(editorViewModelProvider.notifier);
 
     Color? toolColor(EditorTool tool) {
@@ -24,6 +27,13 @@ class EditorAppBar extends ConsumerWidget implements PreferredSizeWidget {
     return AppBar(
       title: const Text('2D Animation Editor'),
       actions: [
+        IconButton(
+          onPressed: viewModel.togglePropertiesPanel,
+          icon: Icon(
+            isPropertiesOpen ? Icons.chevron_right : Icons.chevron_left,
+          ),
+          tooltip: isPropertiesOpen ? 'Hide sidebar' : 'Show sidebar',
+        ),
         IconButton(
           onPressed: () => viewModel.setActiveTool(EditorTool.brush),
           icon: const Icon(Icons.brush),
