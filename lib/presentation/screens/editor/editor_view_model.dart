@@ -2,7 +2,14 @@ import 'dart:ui';
 
 import 'package:animation_maker/domain/models/shape.dart';
 import 'package:animation_maker/domain/services/quadtree.dart';
+import 'package:animation_maker/presentation/painting/brushes/brush_type.dart';
+import 'package:animation_maker/presentation/painting/raster_controller.dart';
+import 'package:animation_maker/presentation/painting/raster_stroke.dart';
+import 'package:animation_maker/presentation/painting/stroke_smoothing.dart';
+import 'package:animation_maker/presentation/screens/editor/history_manager.dart';
+import 'package:animation_maker/presentation/screens/editor/tool_state_toggles.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:perfect_freehand/perfect_freehand.dart';
 
 enum EditorTool {
   brush,
@@ -18,6 +25,15 @@ class EditorState {
     required this.currentFrame,
     required this.isPropertiesOpen,
     required this.shapeDrawKind,
+    required this.currentColor,
+    required this.isPanMode,
+    required this.currentBrush,
+    required this.rasterLayer,
+    required this.brushThickness,
+    required this.brushOpacity,
+    required this.brushSmoothness,
+    required this.isToolPanelOpen,
+    required this.inProgressStroke,
   });
 
   factory EditorState.initial() => const EditorState(
@@ -27,6 +43,15 @@ class EditorState {
         currentFrame: 0,
         isPropertiesOpen: true,
         shapeDrawKind: ShapeKind.rectangle,
+        currentColor: Color(0xFF000000),
+        isPanMode: false,
+        currentBrush: BrushType.standard,
+        rasterLayer: null,
+        brushThickness: 4.0,
+        brushOpacity: 1.0,
+        brushSmoothness: 0.35,
+        isToolPanelOpen: false,
+        inProgressStroke: const <PointVector>[],
       );
 
   final List<Shape> shapes;
@@ -35,6 +60,15 @@ class EditorState {
   final int currentFrame;
   final bool isPropertiesOpen;
   final ShapeKind shapeDrawKind;
+  final Color currentColor;
+  final bool isPanMode;
+  final BrushType currentBrush;
+  final Image? rasterLayer;
+  final double brushThickness;
+  final double brushOpacity;
+  final double brushSmoothness;
+  final bool isToolPanelOpen;
+  final List<PointVector> inProgressStroke;
 
   EditorState copyWith({
     List<Shape>? shapes,
@@ -44,6 +78,15 @@ class EditorState {
     bool? isPropertiesOpen,
     bool clearSelection = false,
     ShapeKind? shapeDrawKind,
+    Color? currentColor,
+    bool? isPanMode,
+    BrushType? currentBrush,
+    Image? rasterLayer,
+    double? brushThickness,
+    double? brushOpacity,
+    double? brushSmoothness,
+    bool? isToolPanelOpen,
+    List<PointVector>? inProgressStroke,
   }) {
     return EditorState(
       shapes: shapes ?? this.shapes,
@@ -53,6 +96,17 @@ class EditorState {
       currentFrame: currentFrame ?? this.currentFrame,
       isPropertiesOpen: isPropertiesOpen ?? this.isPropertiesOpen,
       shapeDrawKind: shapeDrawKind ?? this.shapeDrawKind,
+      currentColor: currentColor ?? this.currentColor,
+      isPanMode: isPanMode ?? this.isPanMode,
+      currentBrush: currentBrush ?? this.currentBrush,
+      rasterLayer: rasterLayer ?? this.rasterLayer,
+      brushThickness: brushThickness ?? this.brushThickness,
+      brushOpacity: brushOpacity ?? this.brushOpacity,
+      brushSmoothness: brushSmoothness ?? this.brushSmoothness,
+      isToolPanelOpen: isToolPanelOpen ?? this.isToolPanelOpen,
+      inProgressStroke: inProgressStroke != null
+          ? List<PointVector>.unmodifiable(inProgressStroke)
+          : this.inProgressStroke,
     );
   }
 }
@@ -60,20 +114,37 @@ class EditorState {
 class EditorViewModel extends Notifier<EditorState> {
   final Rect _quadBoundary = const Rect.fromLTWH(0, 0, 5000, 5000);
   late QuadTree _quadTree;
+  final RasterController _rasterController = RasterController();
+  final HistoryManager _history = HistoryManager();
+  final ToolStateToggles _toolToggles = ToolStateToggles();
   @override
   EditorState build() {
     _quadTree = QuadTree(boundary: _quadBoundary);
-    return EditorState.initial();
+    final initial = EditorState.initial();
+    _history.reset();
+    _history.push(
+      shapes: initial.shapes,
+      strokes: const [],
+      selectedId: initial.selectedShapeId,
+    );
+    return initial;
   }
 
   int _shapeCounter = 0;
   String? _currentDrawingId;
   Offset? _shapeStartPoint;
   Offset? _lastLineEnd;
-  static const double _minPointDistance = 1.5;
+  StrokeSmoother? _smoother;
+  bool _applyingHistory = false;
+  final List<PointVector> _currentStrokePoints = [];
+  bool _isDrawingStroke = false;
 
   void setActiveTool(EditorTool tool) {
-    state = state.copyWith(activeTool: tool);
+    state = _toolToggles.deactivatePan(state).copyWith(activeTool: tool);
+    if (tool != EditorTool.brush && _isDrawingStroke) {
+      _resetStrokeState();
+      state = state.copyWith(inProgressStroke: const []);
+    }
     if (tool != EditorTool.shape) {
       _lastLineEnd = null;
     }
@@ -88,21 +159,73 @@ class EditorViewModel extends Notifier<EditorState> {
 
   void setShapes(List<Shape> shapes) {
     _setShapesAndRebuild(shapes);
+    _pushHistory();
   }
 
   void setCurrentFrame(int frame) {
     state = state.copyWith(currentFrame: frame);
   }
 
+  void updateCanvasSize(Size size) {
+    _rasterController.updateSize(size);
+  }
+
   void togglePropertiesPanel() {
-    state = state.copyWith(isPropertiesOpen: !state.isPropertiesOpen);
+    state = _toolToggles.toggleProperties(state);
+  }
+
+  void toggleToolPanel() {
+    state = _toolToggles.toggleToolPanel(state);
+  }
+
+  bool get canUndo => _history.canUndo;
+  bool get canRedo => _history.canRedo;
+
+  Future<void> undo() async {
+    final snap = _history.undo();
+    if (snap == null) return;
+    await _applySnapshot(snap);
+  }
+
+  Future<void> redo() async {
+    final snap = _history.redo();
+    if (snap == null) return;
+    await _applySnapshot(snap);
   }
 
   void setShapeDrawKind(ShapeKind kind) {
     state = state.copyWith(shapeDrawKind: kind);
   }
 
-  void updateSelectedStroke({double? strokeWidth, Color? strokeColor}) {
+  void setCurrentColor(Color color) {
+    state = state.copyWith(currentColor: color);
+  }
+
+  void togglePanMode() {
+    state = _toolToggles.togglePanMode(state);
+  }
+
+  void setBrushType(BrushType brush) {
+    state = state.copyWith(currentBrush: brush);
+  }
+
+  void setBrushThickness(double value) {
+    state = state.copyWith(brushThickness: value.clamp(0.5, 300));
+  }
+
+  void setBrushOpacity(double value) {
+    state = state.copyWith(brushOpacity: value.clamp(0.05, 1.0));
+  }
+
+  void setBrushSmoothness(double value) {
+    state = state.copyWith(brushSmoothness: value.clamp(0.0, 1.0));
+  }
+
+  void updateSelectedStroke({
+    double? strokeWidth,
+    Color? strokeColor,
+    bool addToHistory = true,
+  }) {
     final targetId = state.selectedShapeId;
     if (targetId == null) return;
     final index = state.shapes.indexWhere((s) => s.id == targetId);
@@ -116,6 +239,9 @@ class EditorViewModel extends Notifier<EditorState> {
     final updatedShapes = List<Shape>.from(state.shapes);
     updatedShapes[index] = updated;
     _setShapesAndRebuild(updatedShapes, rebuildQuadTree: false);
+    if (addToHistory) {
+      _pushHistory();
+    }
   }
 
   void updateSelectedBounds({
@@ -157,6 +283,7 @@ class EditorViewModel extends Notifier<EditorState> {
     final updatedShapes = List<Shape>.from(state.shapes);
     updatedShapes[index] = updated;
     _setShapesAndRebuild(updatedShapes);
+    _pushHistory();
   }
 
   String _nextShapeId() {
@@ -166,53 +293,76 @@ class EditorViewModel extends Notifier<EditorState> {
 
   void startDrawing(Offset point) {
     if (state.activeTool != EditorTool.brush) return;
-    final newShape = Shape(
-      id: _nextShapeId(),
-      kind: ShapeKind.freehand,
-      points: [point],
-      strokeColor: const Color(0xFF000000),
-      strokeWidth: 2.0,
+    if (_isDrawingStroke) return;
+    state = state.copyWith(selectedShapeId: null, clearSelection: true);
+    _currentStrokePoints
+      ..clear()
+      ..add(PointVector.fromOffset(offset: point, pressure: 1.0));
+    _configureFilters();
+    state = state.copyWith(
+      inProgressStroke: List<PointVector>.from(_currentStrokePoints),
     );
-    final updatedShapes = [...state.shapes, newShape];
-    _setShapesAndRebuild(
-      updatedShapes,
-      selectedShapeId: newShape.id,
-    );
-    _currentDrawingId = newShape.id;
+    _isDrawingStroke = true;
   }
 
   void continueDrawing(Offset point) {
-    if (_currentDrawingId == null || state.activeTool != EditorTool.brush) {
+    if (!_isDrawingStroke || state.activeTool != EditorTool.brush) {
       return;
     }
-    final index =
-        state.shapes.indexWhere((shape) => shape.id == _currentDrawingId);
-    if (index == -1) return;
-
-    final target = state.shapes[index];
+    final filtered = _filterPoint(point);
+    final lastVector =
+        _currentStrokePoints.isNotEmpty ? _currentStrokePoints.last : null;
     final lastPoint =
-        target.points.isNotEmpty ? target.points.last : null;
+        lastVector != null ? Offset(lastVector.x, lastVector.y) : null;
     if (lastPoint != null &&
-        (lastPoint - point).distance < _minPointDistance) {
+        (lastPoint - filtered).distance < _minPointDistanceForBrush()) {
       return;
     }
 
-    final updatedPoints = [...target.points, point];
-    final updatedShape = target.copyWith(points: updatedPoints);
-
-    final updatedShapes = List<Shape>.from(state.shapes);
-    updatedShapes[index] = updatedShape;
-
-    _setShapesAndRebuild(updatedShapes, rebuildQuadTree: false);
+    _currentStrokePoints
+        .add(PointVector.fromOffset(offset: filtered, pressure: 1.0));
+    state = state.copyWith(
+      inProgressStroke: List<PointVector>.from(_currentStrokePoints),
+    );
   }
 
-  void endDrawing() {
-    _rebuildQuadTree(state.shapes);
-    _currentDrawingId = null;
+  Future<void> endDrawing() async {
+    if (!_isDrawingStroke) {
+      return;
+    }
+    final rasterPoints = _currentStrokePoints.isNotEmpty
+        ? List<PointVector>.from(_currentStrokePoints)
+        : <PointVector>[];
+    if (rasterPoints.isEmpty) {
+      _resetStrokeState();
+      state = state.copyWith(inProgressStroke: const []);
+      return;
+    }
+    final newRaster = await _rasterController.addStroke(
+      RasterStroke(
+        points: rasterPoints,
+        color: state.currentColor,
+        strokeWidth: state.brushThickness,
+        opacity: state.brushOpacity,
+        thinning: 0.6,
+        smoothing: state.brushSmoothness,
+        streamline: state.brushSmoothness,
+        simulatePressure: true,
+      ),
+    );
+
+    state = state.copyWith(
+      rasterLayer: newRaster,
+      inProgressStroke: const [],
+    );
+    _pushHistory();
+
+    _resetStrokeState();
   }
 
   void startShapeDrawing(Offset point) {
     if (state.activeTool != EditorTool.shape) return;
+    if (_currentDrawingId != null) return;
     final kind = state.shapeDrawKind;
     final start = _maybeSnapLineStart(point, kind);
     final newShape = _createShapeForKind(kind, start);
@@ -244,14 +394,14 @@ class EditorViewModel extends Notifier<EditorState> {
         updatedShape = target.copyWith(bounds: rect);
         break;
       case ShapeKind.line:
-        final lastPoint =
-            target.points.isNotEmpty ? target.points.last : null;
+        final filtered = _filterPoint(point);
+        final lastPoint = target.points.isNotEmpty ? target.points.last : null;
         if (lastPoint != null &&
-            (lastPoint - point).distance < _minPointDistance) {
+            (lastPoint - filtered).distance < _minPointDistanceForBrush()) {
           break;
         }
         updatedShape =
-            target.copyWith(points: [_shapeStartPoint!, point]);
+            target.copyWith(points: [_shapeStartPoint!, filtered]);
         break;
       case ShapeKind.polygon:
         // Use triangle defined by start + current as bounding box.
@@ -291,6 +441,8 @@ class EditorViewModel extends Notifier<EditorState> {
     _rebuildQuadTree(state.shapes);
     _currentDrawingId = null;
     _shapeStartPoint = null;
+    _smoother?.reset();
+    _pushHistory();
   }
 
   void moveSelectedBy(Offset delta) {
@@ -390,17 +542,41 @@ class EditorViewModel extends Notifier<EditorState> {
       shapes: immutableShapes,
       selectedShapeId: selectedShapeId,
       clearSelection: clearSelection,
+      inProgressStroke: const [],
     );
     if (rebuildQuadTree) {
       _rebuildQuadTree(immutableShapes);
     }
   }
 
+
   void _rebuildQuadTree(List<Shape> shapes) {
     _quadTree = QuadTree(boundary: _quadBoundary);
     for (final shape in shapes) {
       _quadTree.insert(shape);
     }
+  }
+
+  Future<void> _applySnapshot(HistorySnapshot snap) async {
+    _resetStrokeState();
+    _applyingHistory = true;
+    _rasterController.replaceStrokes(snap.rasterStrokes);
+    final newRaster = await _rasterController.renderAll();
+    _setShapesAndRebuild(snap.shapes, selectedShapeId: snap.selectedShapeId);
+    state = state.copyWith(
+      rasterLayer: newRaster,
+      inProgressStroke: const [],
+    );
+    _applyingHistory = false;
+  }
+
+  void _pushHistory() {
+    if (_applyingHistory) return;
+    _history.push(
+      shapes: state.shapes,
+      strokes: _rasterController.strokes,
+      selectedId: state.selectedShapeId,
+    );
   }
 
   QuadTree get quadTree => _quadTree;
@@ -414,7 +590,7 @@ class EditorViewModel extends Notifier<EditorState> {
           id: _nextShapeId(),
           kind: kind,
           bounds: Rect.fromLTWH(start.dx, start.dy, 0, 0),
-          strokeColor: const Color(0xFF000000),
+          strokeColor: state.currentColor,
           strokeWidth: 2.0,
         );
       case ShapeKind.line:
@@ -422,7 +598,7 @@ class EditorViewModel extends Notifier<EditorState> {
           id: _nextShapeId(),
           kind: ShapeKind.line,
           points: [start, start],
-          strokeColor: const Color(0xFF000000),
+          strokeColor: state.currentColor,
           strokeWidth: 2.0,
         );
       case ShapeKind.polygon:
@@ -431,7 +607,7 @@ class EditorViewModel extends Notifier<EditorState> {
           id: _nextShapeId(),
           kind: ShapeKind.polygon,
           points: pts,
-          strokeColor: const Color(0xFF000000),
+          strokeColor: state.currentColor,
           strokeWidth: 2.0,
         );
       case ShapeKind.freehand:
@@ -439,7 +615,7 @@ class EditorViewModel extends Notifier<EditorState> {
           id: _nextShapeId(),
           kind: ShapeKind.freehand,
           points: [start],
-          strokeColor: const Color(0xFF000000),
+          strokeColor: state.currentColor,
           strokeWidth: 2.0,
         );
     }
@@ -464,6 +640,30 @@ class EditorViewModel extends Notifier<EditorState> {
       return _lastLineEnd!;
     }
     return point;
+  }
+
+  double _minPointDistanceForBrush() =>
+      (_smoother ?? StrokeSmoother(state.brushSmoothness)).pointSpacing();
+
+  void finalizeSelectionEdit() {
+    _pushHistory();
+  }
+
+  void _configureFilters() {
+    _smoother = StrokeSmoother(state.brushSmoothness)..start();
+  }
+
+  Offset _filterPoint(Offset point) {
+    final sm = _smoother;
+    if (sm == null) return point;
+    return sm.filterPoint(point);
+  }
+
+  void _resetStrokeState() {
+    _isDrawingStroke = false;
+    _currentStrokePoints.clear();
+    _smoother?.reset();
+    _smoother = null;
   }
 }
 

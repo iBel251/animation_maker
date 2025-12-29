@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_colorpicker/flutter_colorpicker.dart';
+import 'package:flutter/services.dart';
 
 import 'editor_view_model.dart';
 import 'package:animation_maker/domain/models/shape.dart';
+import '../../widgets/adaptive_color_picker.dart';
 
 class PropertiesPanel extends ConsumerStatefulWidget {
   const PropertiesPanel({super.key, this.shapeCount});
@@ -40,6 +43,9 @@ class _PropertiesPanelState extends ConsumerState<PropertiesPanel> {
     );
     final shapes = widget.shapeCount ??
         ref.watch(editorViewModelProvider.select((state) => state.shapes.length));
+    final currentColor = ref.watch(
+      editorViewModelProvider.select((state) => state.currentColor),
+    );
     final selectedShape = ref.watch(
       editorViewModelProvider.select((state) {
         final id = state.selectedShapeId;
@@ -68,7 +74,7 @@ class _PropertiesPanelState extends ConsumerState<PropertiesPanel> {
                       textAlign: TextAlign.center,
                       style: Theme.of(context).textTheme.bodyMedium,
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 12),
                     Text(
                       'Shapes: $shapes',
                       style: Theme.of(context)
@@ -127,13 +133,37 @@ class _PropertiesPanelState extends ConsumerState<PropertiesPanel> {
                       strokeWidth: selectedShape.strokeWidth,
                     ),
                     const SizedBox(height: 12),
-                    _colorRow(
-                      context,
-                      selectedColor: selectedShape.strokeColor,
-                      onSelect: (c) =>
-                          ref.read(editorViewModelProvider.notifier).updateSelectedStroke(
-                                strokeColor: c,
-                              ),
+                    _sectionTitle(context, 'Color'),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: IconButton(
+                        tooltip: 'Pick color',
+                        onPressed: () async {
+                          final picked = await showAdaptiveColorPicker(
+                            context: context,
+                            initialColor: selectedShape.strokeColor,
+                          );
+                          if (picked != null) {
+                            ref
+                                .read(editorViewModelProvider.notifier)
+                                .updateSelectedStroke(strokeColor: picked);
+                          }
+                        },
+                        icon: Container(
+                          width: 32,
+                          height: 32,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: selectedShape.strokeColor,
+                            border: Border.all(
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onSurface
+                                  .withOpacity(0.25),
+                            ),
+                          ),
+                        ),
+                      ),
                     ),
                     const SizedBox(height: 12),
                     Text(
@@ -256,8 +286,9 @@ class _PropertiesPanelState extends ConsumerState<PropertiesPanel> {
           label: strokeWidth.toStringAsFixed(1),
           onChanged: (v) {
             _strokeCtrl.text = v.toStringAsFixed(1);
-            _updateStrokeWidth(v);
+            _updateStrokeWidth(v, addToHistory: false);
           },
+          onChangeEnd: (v) => _updateStrokeWidth(v, addToHistory: true),
           activeColor: theme.colorScheme.primary,
         ),
       ],
@@ -268,6 +299,7 @@ class _PropertiesPanelState extends ConsumerState<PropertiesPanel> {
     BuildContext context, {
     required Color selectedColor,
     required ValueChanged<Color> onSelect,
+    required Future<Color?> Function() onPickAdvanced,
   }) {
     final palette = <Color>[
       Colors.black,
@@ -279,30 +311,46 @@ class _PropertiesPanelState extends ConsumerState<PropertiesPanel> {
       Colors.purple,
       Colors.teal,
     ];
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: palette
-          .map(
-            (c) => GestureDetector(
-              onTap: () => onSelect(c),
-              child: Container(
-                width: 28,
-                height: 28,
-                decoration: BoxDecoration(
-                  color: c,
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                    color: c == selectedColor
-                        ? Theme.of(context).colorScheme.primary
-                        : Colors.grey.shade400,
-                    width: c == selectedColor ? 2 : 1,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: palette
+              .map(
+                (c) => GestureDetector(
+                  onTap: () => onSelect(c),
+                  child: Container(
+                    width: 28,
+                    height: 28,
+                    decoration: BoxDecoration(
+                      color: c,
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: c == selectedColor
+                            ? Theme.of(context).colorScheme.primary
+                            : Colors.grey.shade400,
+                        width: c == selectedColor ? 2 : 1,
+                      ),
+                    ),
                   ),
                 ),
-              ),
-            ),
-          )
-          .toList(),
+              )
+              .toList(),
+        ),
+        const SizedBox(height: 8),
+        TextButton.icon(
+          onPressed: () async {
+            final picked = await onPickAdvanced();
+            if (picked != null) {
+              onSelect(picked);
+            }
+          },
+          icon: const Icon(Icons.palette_outlined),
+          label: const Text('Advanced picker'),
+        ),
+      ],
     );
   }
 
@@ -320,11 +368,33 @@ class _PropertiesPanelState extends ConsumerState<PropertiesPanel> {
         );
   }
 
-  void _updateStrokeWidth(double? width) {
+  void _updateStrokeWidth(double? width, {bool addToHistory = true}) {
     if (width == null) return;
     ref
         .read(editorViewModelProvider.notifier)
-        .updateSelectedStroke(strokeWidth: width);
+        .updateSelectedStroke(strokeWidth: width, addToHistory: addToHistory);
+  }
+
+  // Color parsing helpers retained for potential future use.
+  Color? _parseHexColor(String input) {
+    var value = input.replaceAll('#', '');
+    if (value.length == 6) {
+      value = 'FF$value';
+    }
+    if (value.length != 8) return null;
+    final intColor = int.tryParse(value, radix: 16);
+    if (intColor == null) return null;
+    return Color(intColor);
+  }
+
+  String _colorToHex(Color color, {bool includeAlpha = true}) {
+    final value = includeAlpha
+        ? color.value
+        : (0xFF << 24) |
+            (color.red << 16) |
+            (color.green << 8) |
+            color.blue;
+    return '#${value.toRadixString(16).padLeft(8, '0').toUpperCase()}';
   }
 }
 
