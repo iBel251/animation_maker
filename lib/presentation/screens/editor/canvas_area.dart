@@ -7,14 +7,49 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'canvas_painter.dart';
 import 'editor_view_model.dart';
 
-class CanvasArea extends ConsumerWidget {
+class CanvasArea extends ConsumerStatefulWidget {
   const CanvasArea({super.key});
 
-  // Fixed logical canvas size.
+  @override
+  ConsumerState<CanvasArea> createState() => _CanvasAreaState();
+}
+
+class _CanvasAreaState extends ConsumerState<CanvasArea> {
   static const Size _designSize = Size(1920, 1080);
+  final TransformationController _controller = TransformationController();
+  double _lastMaxW = 0;
+  double _lastMaxH = 0;
+  double _baseScale = 1.0;
+  double _currentScale = 1.0;
+  int _pointerCount = 0;
+  int? _activePointer;
+  bool _multiTouchInProgress = false;
+  bool _initializedTransform = false;
+
+  static const double _minScale = 0.25;
+  static const double _maxScale = 8.0;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  void initState() {
+    super.initState();
+    _controller.addListener(_handleTransformChanged);
+  }
+
+  @override
+  void dispose() {
+    _controller.removeListener(_handleTransformChanged);
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _handleTransformChanged() {
+    setState(() {
+      _currentScale = _controller.value.getMaxScaleOnAxis();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final shapes = ref.watch(editorViewModelProvider.select((s) => s.shapes));
     final selectedShapeId =
         ref.watch(editorViewModelProvider.select((s) => s.selectedShapeId));
@@ -32,31 +67,52 @@ class CanvasArea extends ConsumerWidget {
         ref.watch(editorViewModelProvider.select((s) => s.brushSmoothness));
     final brushColor =
         ref.watch(editorViewModelProvider.select((s) => s.currentColor));
+    final brushType =
+        ref.watch(editorViewModelProvider.select((s) => s.currentBrush));
     final ui.Image? raster =
         ref.watch(editorViewModelProvider.select((s) => s.rasterLayer));
     final vm = ref.read(editorViewModelProvider.notifier);
 
-    // Fix raster resolution to design size.
+    // Keep raster resolution fixed.
     WidgetsBinding.instance.addPostFrameCallback(
       (_) => vm.updateCanvasSize(_designSize),
     );
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final scale = _computeScale(
-          constraints.maxWidth,
-          constraints.maxHeight,
-          _designSize,
-        );
+        final maxW = constraints.maxWidth;
+        final maxH = constraints.maxHeight;
+        final scale = _computeScale(maxW, maxH, _designSize);
         final offset = Offset(
-          (constraints.maxWidth - _designSize.width * scale) / 2,
-          (constraints.maxHeight - _designSize.height * scale) / 2,
+          (maxW - _designSize.width * scale) / 2,
+          (maxH - _designSize.height * scale) / 2,
         );
 
-        Offset _toCanvas(Offset local) => Offset(
-              (local.dx - offset.dx) / scale,
-              (local.dy - offset.dy) / scale,
-            );
+        if (!_initializedTransform) {
+          _controller.value = Matrix4.identity()
+            ..translate(offset.dx, offset.dy)
+            ..scale(scale);
+          _lastMaxW = maxW;
+          _lastMaxH = maxH;
+          _baseScale = scale;
+          _currentScale = scale;
+          _initializedTransform = true;
+        } else if (maxW != _lastMaxW || maxH != _lastMaxH) {
+          // Preserve scene center when layout changes (e.g., sidebars open).
+          final prevViewportCenter = Offset(_lastMaxW / 2, _lastMaxH / 2);
+          final sceneCenter = _controller.toScene(prevViewportCenter);
+          final currentScale = _controller.value.getMaxScaleOnAxis();
+          final newViewportCenter = Offset(maxW / 2, maxH / 2);
+          _controller.value = Matrix4.identity()
+            ..translate(newViewportCenter.dx, newViewportCenter.dy)
+            ..scale(currentScale)
+            ..translate(-sceneCenter.dx, -sceneCenter.dy);
+          _lastMaxW = maxW;
+          _lastMaxH = maxH;
+        }
+        _currentScale = _controller.value.getMaxScaleOnAxis();
+
+        Offset _toCanvas(Offset local) => _controller.toScene(local);
 
         final painter = CustomPaint(
           painter: CanvasPainter(
@@ -68,11 +124,12 @@ class CanvasArea extends ConsumerWidget {
             brushOpacity: brushOpacity,
             brushSmoothness: brushSmoothness,
             brushColor: brushColor,
+            brushType: brushType,
           ),
           child: const SizedBox.expand(),
         );
 
-        final canvasContent = SizedBox(
+        final canvasSurface = SizedBox(
           width: _designSize.width,
           height: _designSize.height,
           child: Container(
@@ -93,91 +150,152 @@ class CanvasArea extends ConsumerWidget {
           ),
         );
 
-        final scaledCanvas = Positioned(
-          left: offset.dx,
-          top: offset.dy,
-          width: _designSize.width * scale,
-          height: _designSize.height * scale,
-          child: Transform.scale(
-            scale: scale,
-            alignment: Alignment.topLeft,
-            child: canvasContent,
-          ),
+        final navActive = isPanMode;
+
+        // InteractiveViewer handles pinch-zoom (always enabled) and single-finger pan only in pan mode.
+        final viewer = InteractiveViewer(
+          transformationController: _controller,
+          constrained: false,
+          panEnabled: navActive,
+          scaleEnabled: true, // allow two-finger pan/zoom even when drawing
+          minScale: _baseScale,
+          maxScale: _baseScale * 8,
+          boundaryMargin: const EdgeInsets.all(2000),
+          child: canvasSurface,
         );
 
-        Widget child;
-        if (isPanMode) {
-          child = InteractiveViewer(
-            constrained: false,
-            panEnabled: true,
-            scaleEnabled: true,
-            minScale: 0.25,
-            maxScale: 8.0,
-            boundaryMargin: const EdgeInsets.all(2000),
-            child: Stack(children: [scaledCanvas]),
-          );
-        } else {
-          child = GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            dragStartBehavior: DragStartBehavior.down,
-            onPanDown: (d) {
-              final pos = _toCanvas(d.localPosition);
+        void handlePointerDown(PointerDownEvent event) {
+          _pointerCount += 1;
+
+          // Ignore drawing while multiple pointers are down; end active stroke/shape once.
+          if (_pointerCount >= 2) {
+            if (!_multiTouchInProgress) {
+              _multiTouchInProgress = true;
               if (activeTool == EditorTool.brush) {
-                vm.startDrawing(pos);
+                vm.cancelDrawing();
               } else if (activeTool == EditorTool.shape) {
-                vm.startShapeDrawing(pos);
+                vm.cancelShapeDrawing();
               }
-            },
-            onTapDown: (d) {
-              if (activeTool == EditorTool.select) {
-                vm.selectAtPoint(_toCanvas(d.localPosition));
-              }
-            },
-            onPanUpdate: (d) {
-              final pos = _toCanvas(d.localPosition);
-              switch (activeTool) {
-                case EditorTool.brush:
-                  vm.continueDrawing(pos);
-                  break;
-                case EditorTool.shape:
-                  vm.updateShapeDrawing(pos);
-                  break;
-                case EditorTool.select:
-                  vm.moveSelectedBy(d.delta / scale);
-                  break;
-              }
-            },
-            onPanEnd: (_) {
-              switch (activeTool) {
-                case EditorTool.brush:
-                  vm.endDrawing();
-                  break;
-                case EditorTool.shape:
-                  vm.finishShapeDrawing();
-                  break;
-                case EditorTool.select:
-                  vm.rebuildQuadTree();
-                  vm.finalizeSelectionEdit();
-                  break;
-              }
-            },
-            onPanCancel: () {
-              switch (activeTool) {
-                case EditorTool.brush:
-                  vm.endDrawing();
-                  break;
-                case EditorTool.shape:
-                  vm.finishShapeDrawing();
-                  break;
-                case EditorTool.select:
-                  break;
-              }
-            },
-            child: Stack(children: [scaledCanvas]),
-          );
+              _activePointer = null;
+            }
+            return;
+          }
+
+          if (navActive) return;
+
+          _activePointer = event.pointer;
+          final pos = _toCanvas(event.localPosition);
+          switch (activeTool) {
+            case EditorTool.brush:
+              vm.startDrawing(pos);
+              break;
+            case EditorTool.shape:
+              vm.startShapeDrawing(pos);
+              break;
+            case EditorTool.select:
+              vm.selectAtPoint(pos);
+              break;
+          }
         }
 
-        return SizedBox.expand(child: Stack(children: [child]));
+        void handlePointerMove(PointerMoveEvent event) {
+          if (_multiTouchInProgress || _pointerCount >= 2) return;
+          final navNow = isPanMode;
+          if (navNow) return;
+
+          if (_activePointer != event.pointer) return;
+          final pos = _toCanvas(event.localPosition);
+          switch (activeTool) {
+            case EditorTool.brush:
+              vm.continueDrawing(pos);
+              break;
+            case EditorTool.shape:
+              vm.updateShapeDrawing(pos);
+              break;
+            case EditorTool.select:
+              vm.moveSelectedBy(event.delta / _currentScale);
+              break;
+          }
+        }
+
+        void handlePointerUp(PointerUpEvent event) {
+          if (_pointerCount > 0) _pointerCount -= 1;
+          final isLast = _pointerCount == 0;
+          final navNow = isPanMode;
+
+          if (_pointerCount < 2) {
+            _multiTouchInProgress = false;
+          }
+
+          if (navNow) {
+            return;
+          }
+
+          if (_activePointer != event.pointer) {
+            if (isLast) _activePointer = null;
+            return;
+          }
+
+          switch (activeTool) {
+            case EditorTool.brush:
+              vm.endDrawing();
+              break;
+            case EditorTool.shape:
+              vm.finishShapeDrawing();
+              break;
+            case EditorTool.select:
+              vm.rebuildQuadTree();
+              vm.finalizeSelectionEdit();
+              break;
+          }
+          _activePointer = null;
+        }
+
+        void handlePointerCancel(PointerCancelEvent event) {
+          if (_pointerCount > 0) _pointerCount -= 1;
+          final isLast = _pointerCount == 0;
+          final navNow = isPanMode;
+
+          if (_pointerCount < 2) {
+            _multiTouchInProgress = false;
+          }
+
+          if (navNow) {
+            _activePointer = null;
+            return;
+          }
+
+          if (_activePointer != event.pointer) {
+            if (isLast) _activePointer = null;
+            return;
+          }
+          switch (activeTool) {
+            case EditorTool.brush:
+              vm.endDrawing();
+              break;
+            case EditorTool.shape:
+              vm.finishShapeDrawing();
+              break;
+            case EditorTool.select:
+              break;
+          }
+          _activePointer = null;
+        }
+
+        return SizedBox.expand(
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            dragStartBehavior: DragStartBehavior.down,
+            child: Listener(
+              behavior: HitTestBehavior.opaque,
+              onPointerDown: handlePointerDown,
+              onPointerMove: handlePointerMove,
+              onPointerUp: handlePointerUp,
+              onPointerCancel: handlePointerCancel,
+              child: viewer,
+            ),
+          ),
+        );
       },
     );
   }

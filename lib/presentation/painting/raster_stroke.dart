@@ -1,5 +1,6 @@
 import 'dart:ui';
 
+import 'package:animation_maker/presentation/painting/brushes/brush_type.dart';
 import 'package:perfect_freehand/perfect_freehand.dart';
 
 /// Minimal stroke data stored for raster history/replay.
@@ -9,10 +10,11 @@ class RasterStroke {
     required this.color,
     required this.strokeWidth,
     required this.opacity,
-    this.thinning = 0.6,
+    this.thinning = 0.5,
     this.smoothing = 0.5,
     this.streamline = 0.5,
     this.simulatePressure = true,
+    this.brushType,
   });
 
   final List<PointVector> points;
@@ -23,4 +25,5 @@ class RasterStroke {
   final double smoothing;
   final double streamline;
   final bool simulatePressure;
+  final BrushType? brushType;
 }

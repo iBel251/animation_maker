@@ -1,6 +1,8 @@
 import 'dart:collection';
 import 'dart:ui';
 
+import 'package:animation_maker/presentation/painting/brushes/brush_type.dart';
+
 enum ShapeKind {
   freehand,
   rectangle,
@@ -22,6 +24,7 @@ class Shape {
     this.translation = Offset.zero,
     this.rotation = 0.0,
     this.scale = 1.0,
+    this.brushType,
   }) : points = UnmodifiableListView(points);
 
   final String id;
@@ -37,6 +40,7 @@ class Shape {
   final double strokeWidth;
   final Color? fillColor;
   final double opacity;
+  final BrushType? brushType;
 
   /// Transform information.
   final Offset translation;
@@ -55,6 +59,7 @@ class Shape {
     Offset? translation,
     double? rotation,
     double? scale,
+    BrushType? brushType,
   }) {
     return Shape(
       id: id ?? this.id,
@@ -68,6 +73,7 @@ class Shape {
       translation: translation ?? this.translation,
       rotation: rotation ?? this.rotation,
       scale: scale ?? this.scale,
+      brushType: brushType ?? this.brushType,
     );
   }
 }

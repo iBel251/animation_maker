@@ -34,6 +34,8 @@ class ToolSettingsPanel extends ConsumerWidget {
                   min: 0.5,
                   max: 300,
                   unit: 'px',
+                  step: 1.0,
+                  snapInterval: 5.0,
                   onChanged: vm.setBrushThickness,
                 ),
                 const SizedBox(height: 12),
@@ -43,6 +45,7 @@ class ToolSettingsPanel extends ConsumerWidget {
                   min: 0.05,
                   max: 1.0,
                   unit: '',
+                  step: 0.1,
                   onChanged: vm.setBrushOpacity,
                 ),
                 const SizedBox(height: 12),
@@ -52,6 +55,7 @@ class ToolSettingsPanel extends ConsumerWidget {
                   min: 0.0,
                   max: 1.0,
                   unit: '',
+                  step: 0.1,
                   onChanged: vm.setBrushSmoothness,
                 ),
               ],
@@ -77,6 +81,8 @@ class _SliderRow extends StatelessWidget {
     required this.max,
     required this.unit,
     required this.onChanged,
+    required this.step,
+    this.snapInterval,
   });
 
   final String label;
@@ -85,6 +91,8 @@ class _SliderRow extends StatelessWidget {
   final double max;
   final String unit;
   final ValueChanged<double> onChanged;
+  final double step;
+  final double? snapInterval;
 
   @override
   Widget build(BuildContext context) {
@@ -99,16 +107,29 @@ class _SliderRow extends StatelessWidget {
           ),
         ),
         Slider(
-          value: value.clamp(min, max),
+          value: _snapValue(value.clamp(min, max)),
           min: min,
           max: max,
-          divisions: 40,
+          divisions: ((max - min) / step).round(),
           label: unit.isEmpty
-              ? value.toStringAsFixed(2)
-              : '${value.toStringAsFixed(1)} $unit',
+              ? _formatValue(value, step)
+              : '${_formatValue(value, step)} $unit',
           onChanged: onChanged,
         ),
       ],
     );
+  }
+
+  String _formatValue(double v, double step) {
+    if (step >= 1) return v.toStringAsFixed(0);
+    if (step >= 0.1) return v.toStringAsFixed(1);
+    return v.toStringAsFixed(2);
+  }
+
+  double _snapValue(double v) {
+    if (snapInterval == null || snapInterval! <= 0) return v;
+    final snap = snapInterval!;
+    final snapped = (v / snap).round() * snap;
+    return snapped.clamp(min, max);
   }
 }

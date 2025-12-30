@@ -5,7 +5,6 @@ import 'package:animation_maker/domain/services/quadtree.dart';
 import 'package:animation_maker/presentation/painting/brushes/brush_type.dart';
 import 'package:animation_maker/presentation/painting/raster_controller.dart';
 import 'package:animation_maker/presentation/painting/raster_stroke.dart';
-import 'package:animation_maker/presentation/painting/stroke_smoothing.dart';
 import 'package:animation_maker/presentation/screens/editor/history_manager.dart';
 import 'package:animation_maker/presentation/screens/editor/tool_state_toggles.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -41,7 +40,7 @@ class EditorState {
         activeTool: EditorTool.brush,
         selectedShapeId: null,
         currentFrame: 0,
-        isPropertiesOpen: true,
+        isPropertiesOpen: false,
         shapeDrawKind: ShapeKind.rectangle,
         currentColor: Color(0xFF000000),
         isPanMode: false,
@@ -134,7 +133,6 @@ class EditorViewModel extends Notifier<EditorState> {
   String? _currentDrawingId;
   Offset? _shapeStartPoint;
   Offset? _lastLineEnd;
-  StrokeSmoother? _smoother;
   bool _applyingHistory = false;
   final List<PointVector> _currentStrokePoints = [];
   bool _isDrawingStroke = false;
@@ -203,6 +201,11 @@ class EditorViewModel extends Notifier<EditorState> {
 
   void togglePanMode() {
     state = _toolToggles.togglePanMode(state);
+  }
+
+  void setPanMode(bool enabled) {
+    if (state.isPanMode == enabled) return;
+    state = state.copyWith(isPanMode: enabled);
   }
 
   void setBrushType(BrushType brush) {
@@ -298,7 +301,6 @@ class EditorViewModel extends Notifier<EditorState> {
     _currentStrokePoints
       ..clear()
       ..add(PointVector.fromOffset(offset: point, pressure: 1.0));
-    _configureFilters();
     state = state.copyWith(
       inProgressStroke: List<PointVector>.from(_currentStrokePoints),
     );
@@ -309,15 +311,11 @@ class EditorViewModel extends Notifier<EditorState> {
     if (!_isDrawingStroke || state.activeTool != EditorTool.brush) {
       return;
     }
-    final filtered = _filterPoint(point);
+    final filtered = point;
     final lastVector =
         _currentStrokePoints.isNotEmpty ? _currentStrokePoints.last : null;
     final lastPoint =
         lastVector != null ? Offset(lastVector.x, lastVector.y) : null;
-    if (lastPoint != null &&
-        (lastPoint - filtered).distance < _minPointDistanceForBrush()) {
-      return;
-    }
 
     _currentStrokePoints
         .add(PointVector.fromOffset(offset: filtered, pressure: 1.0));
@@ -344,10 +342,11 @@ class EditorViewModel extends Notifier<EditorState> {
         color: state.currentColor,
         strokeWidth: state.brushThickness,
         opacity: state.brushOpacity,
-        thinning: 0.6,
-        smoothing: state.brushSmoothness,
-        streamline: state.brushSmoothness,
+        thinning: _strokeThinning(),
+        smoothing: _strokeSmoothing(state.brushSmoothness),
+        streamline: _strokeStreamline(state.brushSmoothness),
         simulatePressure: true,
+        brushType: state.currentBrush,
       ),
     );
 
@@ -358,6 +357,29 @@ class EditorViewModel extends Notifier<EditorState> {
     _pushHistory();
 
     _resetStrokeState();
+  }
+
+  /// Abort an in-progress stroke without committing it (e.g., multitouch).
+  void cancelDrawing() {
+    if (!_isDrawingStroke) return;
+    _resetStrokeState();
+    state = state.copyWith(inProgressStroke: const []);
+  }
+
+  /// Abort an in-progress shape draw and discard the provisional shape.
+  void cancelShapeDrawing() {
+    if (_currentDrawingId == null) return;
+    final idx = state.shapes.indexWhere((s) => s.id == _currentDrawingId);
+    if (idx == -1) {
+      _currentDrawingId = null;
+      _shapeStartPoint = null;
+      return;
+    }
+    final updated = List<Shape>.from(state.shapes)..removeAt(idx);
+    _setShapesAndRebuild(updated, rebuildQuadTree: true);
+    _currentDrawingId = null;
+    _shapeStartPoint = null;
+    _lastLineEnd = null;
   }
 
   void startShapeDrawing(Offset point) {
@@ -394,7 +416,7 @@ class EditorViewModel extends Notifier<EditorState> {
         updatedShape = target.copyWith(bounds: rect);
         break;
       case ShapeKind.line:
-        final filtered = _filterPoint(point);
+        final filtered = point;
         final lastPoint = target.points.isNotEmpty ? target.points.last : null;
         if (lastPoint != null &&
             (lastPoint - filtered).distance < _minPointDistanceForBrush()) {
@@ -441,7 +463,6 @@ class EditorViewModel extends Notifier<EditorState> {
     _rebuildQuadTree(state.shapes);
     _currentDrawingId = null;
     _shapeStartPoint = null;
-    _smoother?.reset();
     _pushHistory();
   }
 
@@ -642,29 +663,22 @@ class EditorViewModel extends Notifier<EditorState> {
     return point;
   }
 
-  double _minPointDistanceForBrush() =>
-      (_smoother ?? StrokeSmoother(state.brushSmoothness)).pointSpacing();
+  double _minPointDistanceForBrush() => 0.0;
 
   void finalizeSelectionEdit() {
     _pushHistory();
   }
 
-  void _configureFilters() {
-    _smoother = StrokeSmoother(state.brushSmoothness)..start();
-  }
-
-  Offset _filterPoint(Offset point) {
-    final sm = _smoother;
-    if (sm == null) return point;
-    return sm.filterPoint(point);
-  }
-
   void _resetStrokeState() {
     _isDrawingStroke = false;
     _currentStrokePoints.clear();
-    _smoother?.reset();
-    _smoother = null;
   }
+
+  double _strokeSmoothing(double slider) =>
+      0.05 + slider.clamp(0.0, 1.0) * 0.75;
+  double _strokeStreamline(double slider) =>
+      0.05 + slider.clamp(0.0, 1.0) * 0.55;
+  double _strokeThinning() => 0.5;
 }
 
 final editorViewModelProvider =

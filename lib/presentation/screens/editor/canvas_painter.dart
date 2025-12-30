@@ -1,6 +1,8 @@
 import 'dart:ui' as ui;
 
 import 'package:animation_maker/domain/models/shape.dart';
+import 'package:animation_maker/presentation/painting/brush_renderer.dart';
+import 'package:animation_maker/presentation/painting/brushes/brush_type.dart';
 import 'package:flutter/material.dart';
 import 'package:perfect_freehand/perfect_freehand.dart';
 
@@ -14,6 +16,8 @@ class CanvasPainter extends CustomPainter {
     required this.brushOpacity,
     required this.brushSmoothness,
     required this.brushColor,
+    this.brushRenderer = const PerfectFreehandRenderer(),
+    this.brushType,
   });
 
   final List<Shape> shapes;
@@ -24,6 +28,8 @@ class CanvasPainter extends CustomPainter {
   final double brushOpacity;
   final double brushSmoothness;
   final Color brushColor;
+  final BrushRenderer brushRenderer;
+  final BrushType? brushType;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -33,10 +39,12 @@ class CanvasPainter extends CustomPainter {
 
     // Live brush stroke preview (raster-only brush data).
     if (inProgressStroke.isNotEmpty) {
+      final renderer = _rendererFor(brushType);
       final path = _buildFreehandPathFromPoints(
         inProgressStroke,
         brushThickness,
         brushSmoothness,
+        renderer,
       );
       if (path != null) {
         final baseAlpha = brushColor.alpha / 255.0;
@@ -50,6 +58,7 @@ class CanvasPainter extends CustomPainter {
 
     // Shapes are painted in list order; later shapes render on top.
     for (final shape in shapes) {
+      final renderer = _rendererFor(shape.brushType);
       final baseAlpha = shape.strokeColor.alpha / 255.0;
       final paint = Paint()
         ..color = shape.strokeColor
@@ -58,7 +67,7 @@ class CanvasPainter extends CustomPainter {
 
       switch (shape.kind) {
         case ShapeKind.freehand:
-          final path = _buildFreehandPath(shape);
+          final path = _buildFreehandPath(shape, renderer);
           if (path != null) {
             paint.style = PaintingStyle.fill;
             canvas.drawPath(path, paint);
@@ -97,52 +106,42 @@ class CanvasPainter extends CustomPainter {
     }
   }
 
-  Path? _buildFreehandPath(Shape shape) {
+  Path? _buildFreehandPath(Shape shape, BrushRenderer renderer) {
     if (shape.points.isEmpty) return null;
-    final outline = getStroke(
-      shape.points
-          .map((p) => PointVector.fromOffset(offset: p))
-          .toList(growable: false),
-      options: StrokeOptions(
+    final smooth = _strokeSmoothing(brushSmoothness);
+    final streamline = _strokeStreamline(brushSmoothness);
+    return renderer.buildPathFromOffsets(
+      shape.points,
+      BrushStrokeOptions(
         size: shape.strokeWidth,
-        smoothing: brushSmoothness,
-        streamline: brushSmoothness,
-        thinning: 0.6,
+        thinning: 0.5,
+        smoothing: smooth,
+        streamline: streamline,
         simulatePressure: true,
         isComplete: true,
       ),
     );
-    return _outlineToPath(outline);
   }
 
   Path? _buildFreehandPathFromPoints(
     List<PointVector> points,
     double thickness,
     double smoothness,
+    BrushRenderer renderer,
   ) {
-    final outline = getStroke(
+    final smooth = _strokeSmoothing(smoothness);
+    final streamline = _strokeStreamline(smoothness);
+    return renderer.buildPath(
       points,
-      options: StrokeOptions(
+      BrushStrokeOptions(
         size: thickness,
-        smoothing: smoothness,
-        streamline: smoothness,
-        thinning: 0.6,
+        thinning: 0.5,
+        smoothing: smooth,
+        streamline: streamline,
         simulatePressure: true,
         isComplete: false,
       ),
     );
-    return _outlineToPath(outline);
-  }
-
-  Path? _outlineToPath(List<Offset> outline) {
-    if (outline.isEmpty) return null;
-    final path = Path()..moveTo(outline.first.dx, outline.first.dy);
-    for (var i = 1; i < outline.length; i++) {
-      final pt = outline[i];
-      path.lineTo(pt.dx, pt.dy);
-    }
-    path.close();
-    return path;
   }
 
   Path? _buildPolyline(List<Offset> points, {bool closePath = false}) {
@@ -187,6 +186,22 @@ class CanvasPainter extends CustomPainter {
         oldDelegate.brushOpacity != brushOpacity ||
         oldDelegate.brushSmoothness != brushSmoothness ||
         oldDelegate.brushColor != brushColor;
+  }
+
+  double _strokeSmoothing(double slider) =>
+      0.05 + slider.clamp(0.0, 1.0) * 0.75;
+  double _strokeStreamline(double slider) =>
+      0.05 + slider.clamp(0.0, 1.0) * 0.55;
+
+  BrushRenderer _rendererFor(BrushType? type) {
+    switch (type) {
+      case BrushType.pencil:
+        return const PencilBrushRenderer(jitter: 0.4);
+      case BrushType.marker:
+        return const MarkerBrushRenderer();
+      default:
+        return brushRenderer;
+    }
   }
 }
 

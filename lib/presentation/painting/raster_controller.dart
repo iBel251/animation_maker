@@ -1,10 +1,13 @@
 import 'dart:ui';
 
+import 'package:animation_maker/presentation/painting/brush_renderer.dart';
 import 'package:animation_maker/presentation/painting/raster_engine.dart';
 import 'package:animation_maker/presentation/painting/raster_stroke.dart';
 
 class RasterController {
-  RasterController({RasterEngine? engine}) : _engine = engine ?? RasterEngine();
+  RasterController({RasterEngine? engine, BrushRenderer? renderer})
+      : _engine = engine ??
+            RasterEngine(renderer: renderer ?? const PerfectFreehandRenderer());
 
   final RasterEngine _engine;
   final List<RasterStroke> _strokes = [];
@@ -18,6 +21,8 @@ class RasterController {
 
   Future<Image?> addStroke(RasterStroke stroke) async {
     _strokes.add(stroke);
+    final incremental = await _engine.renderStrokeIncremental(stroke);
+    if (incremental != null) return incremental;
     return _engine.renderStrokes(_strokes);
   }
 
