@@ -3,9 +3,11 @@ import 'dart:ui';
 import 'package:animation_maker/domain/models/shape.dart';
 import 'package:animation_maker/domain/services/quadtree.dart';
 import 'package:animation_maker/presentation/painting/brushes/brush_type.dart';
+import 'package:animation_maker/presentation/painting/brush_stroke_factory.dart';
 import 'package:animation_maker/presentation/painting/raster_controller.dart';
 import 'package:animation_maker/presentation/painting/raster_stroke.dart';
 import 'package:animation_maker/presentation/screens/editor/history_manager.dart';
+import 'package:animation_maker/presentation/screens/editor/shape_transformer.dart';
 import 'package:animation_maker/presentation/screens/editor/tool_state_toggles.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:perfect_freehand/perfect_freehand.dart';
@@ -33,6 +35,9 @@ class EditorState {
     required this.brushSmoothness,
     required this.isToolPanelOpen,
     required this.inProgressStroke,
+    required this.palmRejectionEnabled,
+    required this.brushVectorMode,
+    this.shapeFillColor,
   });
 
   factory EditorState.initial() => const EditorState(
@@ -51,6 +56,9 @@ class EditorState {
         brushSmoothness: 0.35,
         isToolPanelOpen: false,
         inProgressStroke: const <PointVector>[],
+        palmRejectionEnabled: false,
+        brushVectorMode: false,
+        shapeFillColor: null,
       );
 
   final List<Shape> shapes;
@@ -68,6 +76,9 @@ class EditorState {
   final double brushSmoothness;
   final bool isToolPanelOpen;
   final List<PointVector> inProgressStroke;
+  final bool palmRejectionEnabled;
+  final bool brushVectorMode;
+  final Color? shapeFillColor;
 
   EditorState copyWith({
     List<Shape>? shapes,
@@ -86,6 +97,9 @@ class EditorState {
     double? brushSmoothness,
     bool? isToolPanelOpen,
     List<PointVector>? inProgressStroke,
+    bool? palmRejectionEnabled,
+    bool? brushVectorMode,
+    Color? shapeFillColor,
   }) {
     return EditorState(
       shapes: shapes ?? this.shapes,
@@ -106,6 +120,10 @@ class EditorState {
       inProgressStroke: inProgressStroke != null
           ? List<PointVector>.unmodifiable(inProgressStroke)
           : this.inProgressStroke,
+      palmRejectionEnabled:
+          palmRejectionEnabled ?? this.palmRejectionEnabled,
+      brushVectorMode: brushVectorMode ?? this.brushVectorMode,
+      shapeFillColor: shapeFillColor ?? this.shapeFillColor,
     );
   }
 }
@@ -224,6 +242,95 @@ class EditorViewModel extends Notifier<EditorState> {
     state = state.copyWith(brushSmoothness: value.clamp(0.0, 1.0));
   }
 
+  void togglePalmRejection() {
+    state = state.copyWith(palmRejectionEnabled: !state.palmRejectionEnabled);
+  }
+
+  void toggleBrushVectorMode() {
+    state = state.copyWith(brushVectorMode: !state.brushVectorMode);
+  }
+
+  void setShapeFillColor(Color? color) {
+    state = state.copyWith(shapeFillColor: color);
+  }
+
+  void updateSelectedTransform({
+    double? rotation,
+    double? scale,
+    bool addToHistory = false,
+  }) {
+    final targetId = state.selectedShapeId;
+    if (targetId == null) return;
+    final idx = state.shapes.indexWhere((s) => s.id == targetId);
+    if (idx == -1) return;
+    final target = state.shapes[idx];
+    if (target.kind == ShapeKind.line && target.points.length < 2) return;
+    final updated = ShapeTransformer.applyTransform(
+      shape: target,
+      rotation: rotation,
+      scale: scale,
+    );
+    final updatedShapes = List<Shape>.from(state.shapes);
+    updatedShapes[idx] = updated;
+    _setShapesAndRebuild(updatedShapes, rebuildQuadTree: false);
+    if (addToHistory) {
+      _pushHistory();
+    }
+  }
+
+  void scaleSelectedGeometry({
+    Rect? baseBounds,
+    List<Offset>? basePoints,
+    required double scaleX,
+    required double scaleY,
+    String? shapeId,
+  }) {
+    final targetId = shapeId ?? state.selectedShapeId;
+    if (targetId == null) return;
+    final idx = state.shapes.indexWhere((s) => s.id == targetId);
+    if (idx == -1) return;
+    final target = state.shapes[idx];
+    final clampedScaleX = scaleX.clamp(0.05, 100.0);
+    final clampedScaleY = scaleY.clamp(0.05, 100.0);
+
+    Shape updated = target;
+    final usesBounds =
+        target.kind == ShapeKind.rectangle || target.kind == ShapeKind.ellipse;
+    final bounds = baseBounds ?? target.bounds;
+
+    if (usesBounds && bounds != null) {
+      final center = bounds.center;
+      final halfW = bounds.width / 2 * clampedScaleX;
+      final halfH = bounds.height / 2 * clampedScaleY;
+      final newRect = Rect.fromLTRB(
+        center.dx - halfW,
+        center.dy - halfH,
+        center.dx + halfW,
+        center.dy + halfH,
+      );
+      updated = target.copyWith(bounds: newRect);
+    } else {
+      final points = basePoints ?? target.points.toList();
+      if (points.isNotEmpty) {
+        final boundsFromPoints = baseBounds ?? _shapeBounds(target);
+        final center = boundsFromPoints?.center ?? points.first;
+        final scaledPoints = points
+            .map(
+              (p) => Offset(
+                center.dx + (p.dx - center.dx) * clampedScaleX,
+                center.dy + (p.dy - center.dy) * clampedScaleY,
+              ),
+            )
+            .toList(growable: false);
+        updated = target.copyWith(points: scaledPoints, bounds: null);
+      }
+    }
+
+    final updatedShapes = List<Shape>.from(state.shapes);
+    updatedShapes[idx] = updated;
+    _setShapesAndRebuild(updatedShapes, rebuildQuadTree: false);
+  }
+
   void updateSelectedStroke({
     double? strokeWidth,
     Color? strokeColor,
@@ -336,18 +443,34 @@ class EditorViewModel extends Notifier<EditorState> {
       state = state.copyWith(inProgressStroke: const []);
       return;
     }
+    final strokeResult = BrushStrokeFactory.build(
+      asVector: state.brushVectorMode,
+      vectorId: _nextShapeId(),
+      points: rasterPoints,
+      color: state.currentColor,
+      thickness: state.brushThickness,
+      opacity: state.brushOpacity,
+      thinning: _strokeThinning(),
+      smoothing: _strokeSmoothing(state.brushSmoothness),
+      streamline: _strokeStreamline(state.brushSmoothness),
+      simulatePressure: true,
+      brushType: state.currentBrush,
+    );
+
+    if (strokeResult.isVector && strokeResult.vectorShape != null) {
+      final updatedShapes = [...state.shapes, strokeResult.vectorShape!];
+      _setShapesAndRebuild(
+        updatedShapes,
+        selectedShapeId: strokeResult.vectorShape!.id,
+      );
+      state = state.copyWith(inProgressStroke: const []);
+      _pushHistory();
+      _resetStrokeState();
+      return;
+    }
+
     final newRaster = await _rasterController.addStroke(
-      RasterStroke(
-        points: rasterPoints,
-        color: state.currentColor,
-        strokeWidth: state.brushThickness,
-        opacity: state.brushOpacity,
-        thinning: _strokeThinning(),
-        smoothing: _strokeSmoothing(state.brushSmoothness),
-        streamline: _strokeStreamline(state.brushSmoothness),
-        simulatePressure: true,
-        brushType: state.currentBrush,
-      ),
+      strokeResult.rasterStroke!,
     );
 
     state = state.copyWith(
@@ -511,7 +634,7 @@ class EditorViewModel extends Notifier<EditorState> {
   }
 
   bool _hitTest(Shape shape, Offset point) {
-    final bounds = shape.bounds ?? _shapeBounds(shape);
+    final bounds = ShapeTransformer.bounds(shape);
     if (bounds == null) return false;
     // Inflate a bit for stroke hit tolerance on strokes.
     const tolerance = 4.0;
@@ -532,24 +655,7 @@ class EditorViewModel extends Notifier<EditorState> {
   }
 
   Rect? _shapeBounds(Shape shape) {
-    if (shape.bounds != null) return shape.bounds;
-    if (shape.points.isEmpty) return null;
-    if (shape.points.length == 1) {
-      final p = shape.points.first;
-      return Rect.fromLTWH(p.dx, p.dy, 0, 0);
-    }
-    double minX = shape.points.first.dx;
-    double maxX = shape.points.first.dx;
-    double minY = shape.points.first.dy;
-    double maxY = shape.points.first.dy;
-
-    for (final p in shape.points) {
-      if (p.dx < minX) minX = p.dx;
-      if (p.dx > maxX) maxX = p.dx;
-      if (p.dy < minY) minY = p.dy;
-      if (p.dy > maxY) maxY = p.dy;
-    }
-    return Rect.fromLTRB(minX, minY, maxX, maxY);
+    return ShapeTransformer.bounds(shape);
   }
 
   void _setShapesAndRebuild(
@@ -612,7 +718,9 @@ class EditorViewModel extends Notifier<EditorState> {
           kind: kind,
           bounds: Rect.fromLTWH(start.dx, start.dy, 0, 0),
           strokeColor: state.currentColor,
-          strokeWidth: 2.0,
+          strokeWidth: state.brushThickness,
+          opacity: state.brushOpacity,
+          fillColor: state.shapeFillColor,
         );
       case ShapeKind.line:
         return Shape(
@@ -620,7 +728,8 @@ class EditorViewModel extends Notifier<EditorState> {
           kind: ShapeKind.line,
           points: [start, start],
           strokeColor: state.currentColor,
-          strokeWidth: 2.0,
+          strokeWidth: state.brushThickness,
+          opacity: state.brushOpacity,
         );
       case ShapeKind.polygon:
         final pts = _trianglePoints(start, start);
@@ -629,7 +738,9 @@ class EditorViewModel extends Notifier<EditorState> {
           kind: ShapeKind.polygon,
           points: pts,
           strokeColor: state.currentColor,
-          strokeWidth: 2.0,
+          strokeWidth: state.brushThickness,
+          opacity: state.brushOpacity,
+          fillColor: state.shapeFillColor,
         );
       case ShapeKind.freehand:
         return Shape(
@@ -637,7 +748,8 @@ class EditorViewModel extends Notifier<EditorState> {
           kind: ShapeKind.freehand,
           points: [start],
           strokeColor: state.currentColor,
-          strokeWidth: 2.0,
+          strokeWidth: state.brushThickness,
+          opacity: state.brushOpacity,
         );
     }
   }

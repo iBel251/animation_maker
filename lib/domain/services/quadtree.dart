@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:ui';
 
 import '../models/shape.dart';
@@ -106,22 +107,54 @@ class QuadTree {
 }
 
 Rect? _shapeBounds(Shape shape) {
-  if (shape.bounds != null) return shape.bounds;
-  if (shape.points.isEmpty) return null;
-  if (shape.points.length == 1) {
-    final p = shape.points.first;
+  final base = shape.bounds ?? _boundsFromPoints(shape.points);
+  if (base == null) return null;
+  if (shape.rotation == 0.0 && shape.scale == 1.0) return base;
+  return _transformedAabb(base, shape.rotation, shape.scale);
+}
+
+Rect? _boundsFromPoints(List<Offset> points) {
+  if (points.isEmpty) return null;
+  if (points.length == 1) {
+    final p = points.first;
     return Rect.fromLTWH(p.dx, p.dy, 0, 0);
   }
-  double minX = shape.points.first.dx;
-  double maxX = shape.points.first.dx;
-  double minY = shape.points.first.dy;
-  double maxY = shape.points.first.dy;
+  double minX = points.first.dx;
+  double maxX = points.first.dx;
+  double minY = points.first.dy;
+  double maxY = points.first.dy;
 
-  for (final p in shape.points) {
+  for (final p in points) {
     if (p.dx < minX) minX = p.dx;
     if (p.dx > maxX) maxX = p.dx;
     if (p.dy < minY) minY = p.dy;
     if (p.dy > maxY) maxY = p.dy;
+  }
+  return Rect.fromLTRB(minX, minY, maxX, maxY);
+}
+
+Rect _transformedAabb(Rect rect, double rotation, double scale) {
+  final cx = rect.center.dx;
+  final cy = rect.center.dy;
+  final corners = <Offset>[
+    Offset(rect.left, rect.top),
+    Offset(rect.right, rect.top),
+    Offset(rect.right, rect.bottom),
+    Offset(rect.left, rect.bottom),
+  ];
+  final cosA = math.cos(rotation);
+  final sinA = math.sin(rotation);
+  double minX = double.infinity, minY = double.infinity;
+  double maxX = -double.infinity, maxY = -double.infinity;
+  for (final c in corners) {
+    final dx = (c.dx - cx) * scale;
+    final dy = (c.dy - cy) * scale;
+    final rx = dx * cosA - dy * sinA + cx;
+    final ry = dx * sinA + dy * cosA + cy;
+    if (rx < minX) minX = rx;
+    if (rx > maxX) maxX = rx;
+    if (ry < minY) minY = ry;
+    if (ry > maxY) maxY = ry;
   }
   return Rect.fromLTRB(minX, minY, maxX, maxY);
 }

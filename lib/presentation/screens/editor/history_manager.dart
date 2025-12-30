@@ -1,4 +1,3 @@
-import 'dart:ui';
 
 import 'package:animation_maker/domain/models/shape.dart';
 import 'package:animation_maker/presentation/painting/raster_stroke.dart';

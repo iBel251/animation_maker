@@ -1,4 +1,5 @@
 import 'dart:ui' as ui;
+import 'dart:math' as math;
 
 import 'package:animation_maker/domain/models/shape.dart';
 import 'package:animation_maker/presentation/painting/brush_renderer.dart';
@@ -18,6 +19,8 @@ class CanvasPainter extends CustomPainter {
     required this.brushColor,
     this.brushRenderer = const PerfectFreehandRenderer(),
     this.brushType,
+    this.showSelectionHandles = false,
+    this.viewportScale = 1.0,
   });
 
   final List<Shape> shapes;
@@ -30,6 +33,8 @@ class CanvasPainter extends CustomPainter {
   final Color brushColor;
   final BrushRenderer brushRenderer;
   final BrushType? brushType;
+  final bool showSelectionHandles;
+  final double viewportScale;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -60,46 +65,93 @@ class CanvasPainter extends CustomPainter {
     for (final shape in shapes) {
       final renderer = _rendererFor(shape.brushType);
       final baseAlpha = shape.strokeColor.alpha / 255.0;
-      final paint = Paint()
-        ..color = shape.strokeColor
-            .withValues(alpha: (baseAlpha * shape.opacity).clamp(0, 1))
-        ..strokeWidth = shape.strokeWidth;
+      final baseBounds = shape.bounds ?? _shapeBoundsFromPoints(shape.points);
+      final paint = renderer.decoratePaint(
+        Paint()
+          ..color = shape.strokeColor
+              .withValues(alpha: (baseAlpha * shape.opacity).clamp(0, 1))
+          ..strokeWidth = shape.strokeWidth,
+      );
 
       switch (shape.kind) {
         case ShapeKind.freehand:
-          final path = _buildFreehandPath(shape, renderer);
-          if (path != null) {
-            paint.style = PaintingStyle.fill;
-            canvas.drawPath(path, paint);
-            _highlightIfSelected(canvas, path.getBounds(), shape.id);
+          _withShapeTransform(canvas, shape, () {
+            final path = _buildFreehandPath(shape, renderer);
+            if (path != null) {
+              // Freehand strokes are filled paths; stroke width is baked into the outline.
+              final fill = renderer.decoratePaint(
+                Paint()
+                  ..color = shape.strokeColor
+                      .withValues(alpha: (baseAlpha * shape.opacity).clamp(0, 1))
+                  ..style = PaintingStyle.fill,
+              );
+              canvas.drawPath(path, fill);
+              canvas.drawPath(path, paint);
+            }
+          });
+          if (selectedShapeId == shape.id && baseBounds != null) {
+            _drawSelection(canvas, _transformedCorners(baseBounds, shape.rotation, shape.scale));
           }
           break;
         case ShapeKind.polygon:
         case ShapeKind.line:
-          final path = _buildPolyline(
-            shape.points,
-            closePath: shape.kind == ShapeKind.polygon,
-          );
-          if (path != null) {
-            paint.style = PaintingStyle.stroke;
-            canvas.drawPath(path, paint);
-            _highlightIfSelected(canvas, path.getBounds(), shape.id);
-          }
+          _withShapeTransform(canvas, shape, () {
+            final path = _buildPolyline(
+              shape.points,
+              closePath: shape.kind == ShapeKind.polygon,
+            );
+            if (path != null) {
+              if (shape.fillColor != null && shape.kind == ShapeKind.polygon) {
+                final fill = Paint()
+                  ..color = shape.fillColor!
+                      .withValues(alpha: (shape.fillColor!.alpha / 255.0 * shape.opacity).clamp(0, 1))
+                  ..style = PaintingStyle.fill;
+                canvas.drawPath(path, fill);
+              }
+              paint.style = PaintingStyle.stroke;
+              canvas.drawPath(path, paint);
+              if (selectedShapeId == shape.id) {
+                _drawSelection(canvas, _transformedCorners(path.getBounds(), shape.rotation, shape.scale));
+              }
+            }
+          });
           break;
         case ShapeKind.rectangle:
-          paint.style = PaintingStyle.stroke;
-          final rect = shape.bounds;
-          if (rect != null) {
-            canvas.drawRect(rect, paint);
-            _highlightIfSelected(canvas, rect, shape.id);
+          _withShapeTransform(canvas, shape, () {
+            final rect = shape.bounds;
+            if (rect != null) {
+              if (shape.fillColor != null) {
+                final fill = Paint()
+                  ..color = shape.fillColor!
+                      .withValues(alpha: (shape.fillColor!.alpha / 255.0 * shape.opacity).clamp(0, 1))
+                  ..style = PaintingStyle.fill;
+                canvas.drawRect(rect, fill);
+              }
+              paint.style = PaintingStyle.stroke;
+              canvas.drawRect(rect, paint);
+            }
+          });
+          if (selectedShapeId == shape.id && shape.bounds != null) {
+            _drawSelection(canvas, _transformedCorners(shape.bounds!, shape.rotation, shape.scale));
           }
           break;
         case ShapeKind.ellipse:
-          paint.style = PaintingStyle.stroke;
-          final rect = shape.bounds;
-          if (rect != null) {
-            canvas.drawOval(rect, paint);
-            _highlightIfSelected(canvas, rect, shape.id);
+          _withShapeTransform(canvas, shape, () {
+            final rect = shape.bounds;
+            if (rect != null) {
+              if (shape.fillColor != null) {
+                final fill = Paint()
+                  ..color = shape.fillColor!
+                      .withValues(alpha: (shape.fillColor!.alpha / 255.0 * shape.opacity).clamp(0, 1))
+                  ..style = PaintingStyle.fill;
+                canvas.drawOval(rect, fill);
+              }
+              paint.style = PaintingStyle.stroke;
+              canvas.drawOval(rect, paint);
+            }
+          });
+          if (selectedShapeId == shape.id && shape.bounds != null) {
+            _drawSelection(canvas, _transformedCorners(shape.bounds!, shape.rotation, shape.scale));
           }
           break;
       }
@@ -162,18 +214,25 @@ class CanvasPainter extends CustomPainter {
     return path;
   }
 
-  void _highlightIfSelected(Canvas canvas, Rect bounds, String shapeId) {
-    if (selectedShapeId != shapeId) return;
+  void _drawSelection(Canvas canvas, List<Offset> corners) {
+    if (corners.length != 4) return;
+    final path = Path()..moveTo(corners.first.dx, corners.first.dy);
+    for (var i = 1; i < corners.length; i++) {
+      path.lineTo(corners[i].dx, corners[i].dy);
+    }
+    path.close();
     final highlightStroke = Paint()
       ..color = const Color(0xFF1E88E5)
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.5;
+      ..strokeWidth = 1.2;
     final highlightFill = Paint()
-      ..color = const Color(0x331E88E5)
+      ..color = const Color(0x221E88E5)
       ..style = PaintingStyle.fill;
-    final inflated = bounds.inflate(4);
-    canvas.drawRect(inflated, highlightFill);
-    canvas.drawRect(inflated, highlightStroke);
+    canvas.drawPath(path, highlightFill);
+    canvas.drawPath(path, highlightStroke);
+
+    if (!showSelectionHandles) return;
+    _drawHandles(canvas, corners);
   }
 
   @override
@@ -201,6 +260,122 @@ class CanvasPainter extends CustomPainter {
         return const MarkerBrushRenderer();
       default:
         return brushRenderer;
+    }
+  }
+
+  void _withShapeTransform(
+    Canvas canvas,
+    Shape shape,
+    VoidCallback draw,
+  ) {
+    final bounds = shape.bounds ?? _shapeBoundsFromPoints(shape.points);
+    if (bounds == null ||
+        (shape.rotation == 0.0 && shape.scale == 1.0)) {
+      draw();
+      return;
+    }
+    final center = bounds.center;
+    canvas.save();
+    canvas.translate(center.dx, center.dy);
+    canvas.rotate(shape.rotation);
+    canvas.scale(shape.scale);
+    canvas.translate(-center.dx, -center.dy);
+    draw();
+    canvas.restore();
+  }
+
+  Rect? _shapeBoundsFromPoints(List<Offset> points) {
+    if (points.isEmpty) return null;
+    double minX = points.first.dx;
+    double maxX = points.first.dx;
+    double minY = points.first.dy;
+    double maxY = points.first.dy;
+    for (final p in points) {
+      if (p.dx < minX) minX = p.dx;
+      if (p.dx > maxX) maxX = p.dx;
+      if (p.dy < minY) minY = p.dy;
+      if (p.dy > maxY) maxY = p.dy;
+    }
+    return Rect.fromLTRB(minX, minY, maxX, maxY);
+  }
+
+  List<Offset> _transformedCorners(Rect rect, double rotation, double scale) {
+    final cx = rect.center.dx;
+    final cy = rect.center.dy;
+    final corners = <Offset>[
+      Offset(rect.left, rect.top),
+      Offset(rect.right, rect.top),
+      Offset(rect.right, rect.bottom),
+      Offset(rect.left, rect.bottom),
+    ];
+    if (rotation == 0.0 && scale == 1.0) return corners;
+    final cosA = math.cos(rotation);
+    final sinA = math.sin(rotation);
+    return corners
+        .map((c) {
+          final dx = (c.dx - cx) * scale;
+          final dy = (c.dy - cy) * scale;
+          final rx = dx * cosA - dy * sinA + cx;
+          final ry = dx * sinA + dy * cosA + cy;
+          return Offset(rx, ry);
+        })
+        .toList(growable: false);
+  }
+
+  void _drawHandles(Canvas canvas, List<Offset> corners) {
+    if (corners.length != 4) return;
+    final size = 10 / viewportScale;
+    final half = size / 2;
+    final handlePaint = Paint()
+      ..color = const Color(0xFF1E88E5)
+      ..style = PaintingStyle.fill;
+    for (final c in corners) {
+      canvas.drawRect(
+        Rect.fromLTWH(c.dx - half, c.dy - half, size, size),
+        handlePaint,
+      );
+    }
+    // Edge handles (middle of each edge).
+    final topCenterEdge = Offset(
+      (corners[0].dx + corners[1].dx) / 2,
+      (corners[0].dy + corners[1].dy) / 2,
+    );
+    final rightCenterEdge = Offset(
+      (corners[1].dx + corners[2].dx) / 2,
+      (corners[1].dy + corners[2].dy) / 2,
+    );
+    final bottomCenterEdge = Offset(
+      (corners[2].dx + corners[3].dx) / 2,
+      (corners[2].dy + corners[3].dy) / 2,
+    );
+    final leftCenterEdge = Offset(
+      (corners[3].dx + corners[0].dx) / 2,
+      (corners[3].dy + corners[0].dy) / 2,
+    );
+    final edgeCenters = [
+      topCenterEdge,
+      rightCenterEdge,
+      bottomCenterEdge,
+      leftCenterEdge
+    ];
+    for (final c in edgeCenters) {
+      canvas.drawCircle(c, size * 0.45, handlePaint);
+    }
+    final topCenter = Offset(
+      (corners[0].dx + corners[1].dx) / 2,
+      (corners[0].dy + corners[1].dy) / 2,
+    );
+    final center = Offset(
+      (corners[0].dx + corners[2].dx) / 2,
+      (corners[0].dy + corners[2].dy) / 2,
+    );
+    final dir = (topCenter - center);
+    final len = dir.distance;
+    if (len > 0) {
+      final norm = dir / len;
+      final handleCenter = center + norm * (len + 20 / viewportScale);
+      canvas.drawCircle(handleCenter, size * 0.6, handlePaint);
+      canvas.drawLine(topCenter, handleCenter, handlePaint..strokeWidth = 1);
     }
   }
 }

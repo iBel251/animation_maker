@@ -21,6 +21,12 @@ class EditorAppBar extends ConsumerWidget implements PreferredSizeWidget {
     final currentColor = ref.watch(
       editorViewModelProvider.select((state) => state.currentColor),
     );
+    final palmRejectionEnabled = ref.watch(
+      editorViewModelProvider.select((state) => state.palmRejectionEnabled),
+    );
+    final brushVectorMode = ref.watch(
+      editorViewModelProvider.select((state) => state.brushVectorMode),
+    );
     final isPropertiesOpen = ref.watch(
       editorViewModelProvider.select((state) => state.isPropertiesOpen),
     );
@@ -150,6 +156,10 @@ class EditorAppBar extends ConsumerWidget implements PreferredSizeWidget {
             final picked = await showBrushTypePicker(
               context: context,
               current: currentBrush,
+              palmRejectionEnabled: palmRejectionEnabled,
+              onTogglePalmRejection: viewModel.togglePalmRejection,
+              brushVectorMode: brushVectorMode,
+              onToggleBrushVectorMode: viewModel.toggleBrushVectorMode,
             );
             if (picked != null) {
               viewModel.setBrushType(picked);

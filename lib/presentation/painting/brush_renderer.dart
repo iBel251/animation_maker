@@ -32,6 +32,9 @@ abstract class BrushRenderer {
     List<Offset> points,
     BrushStrokeOptions options,
   );
+
+  /// Allow brushes to tweak paint (e.g., add blur/alpha tweaks).
+  Paint decoratePaint(Paint paint) => paint;
 }
 
 class PerfectFreehandRenderer extends BrushRenderer {
@@ -75,6 +78,9 @@ class PerfectFreehandRenderer extends BrushRenderer {
     path.close();
     return path;
   }
+
+  @override
+  Paint decoratePaint(Paint paint) => paint;
 }
 
 /// A simple “pencil” renderer that introduces slight jitter and lighter strokes.
@@ -139,6 +145,13 @@ class PencilBrushRenderer extends BrushRenderer {
     path.close();
     return path;
   }
+
+  @override
+  Paint decoratePaint(Paint paint) {
+    return paint
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 0.8)
+      ..color = paint.color.withOpacity((paint.color.opacity * 0.85).clamp(0, 1));
+  }
 }
 
 /// A "marker" brush with uniform width (minimal pressure variance) and smoother edges.
@@ -182,5 +195,12 @@ class MarkerBrushRenderer extends BrushRenderer {
     }
     path.close();
     return path;
+  }
+
+  @override
+  Paint decoratePaint(Paint paint) {
+    return paint
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 0.6)
+      ..isAntiAlias = true;
   }
 }

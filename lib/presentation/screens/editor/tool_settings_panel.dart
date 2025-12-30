@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'editor_view_model.dart';
+import '../../widgets/adaptive_color_picker.dart';
 
 /// Placeholder tool settings panel for future brush/tool configuration.
 class ToolSettingsPanel extends ConsumerWidget {
@@ -12,63 +13,125 @@ class ToolSettingsPanel extends ConsumerWidget {
     final state = ref.watch(editorViewModelProvider);
     final vm = ref.read(editorViewModelProvider.notifier);
     final isBrush = state.activeTool == EditorTool.brush;
+    final isShape = state.activeTool == EditorTool.shape;
 
     return Container(
       color: Colors.grey.shade50,
       padding: const EdgeInsets.all(12),
       child: isBrush
-          ? Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Brush Settings',
-                  style: Theme.of(context)
-                      .textTheme
-                      .titleMedium
-                      ?.copyWith(fontWeight: FontWeight.w600),
+          ? _BrushSettings(state: state, vm: vm)
+          : isShape
+              ? _ShapeSettings(state: state, vm: vm)
+              : Center(
+                  child: Text(
+                    'Select a tool to see settings',
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodySmall
+                        ?.copyWith(color: Colors.grey.shade600),
+                  ),
                 ),
-                const SizedBox(height: 12),
-                _SliderRow(
-                  label: 'Thickness',
-                  value: state.brushThickness,
-                  min: 0.5,
-                  max: 300,
-                  unit: 'px',
-                  step: 1.0,
-                  snapInterval: 5.0,
-                  onChanged: vm.setBrushThickness,
-                ),
-                const SizedBox(height: 12),
-                _SliderRow(
-                  label: 'Opacity',
-                  value: state.brushOpacity,
-                  min: 0.05,
-                  max: 1.0,
-                  unit: '',
-                  step: 0.1,
-                  onChanged: vm.setBrushOpacity,
-                ),
-                const SizedBox(height: 12),
-                _SliderRow(
-                  label: 'Smoothness',
-                  value: state.brushSmoothness,
-                  min: 0.0,
-                  max: 1.0,
-                  unit: '',
-                  step: 0.1,
-                  onChanged: vm.setBrushSmoothness,
-                ),
-              ],
-            )
-          : Center(
-              child: Text(
-                'Select a brush to see settings',
-                style: Theme.of(context)
-                    .textTheme
-                    .bodySmall
-                    ?.copyWith(color: Colors.grey.shade600),
-              ),
-            ),
+    );
+  }
+}
+
+class _ShapeSettings extends StatelessWidget {
+  const _ShapeSettings({required this.state, required this.vm});
+
+  final EditorState state;
+  final EditorViewModel vm;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Shape Settings',
+          style: theme.textTheme.titleMedium
+              ?.copyWith(fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 12),
+        _SliderRow(
+          label: 'Stroke Width',
+          value: state.brushThickness,
+          min: 0.5,
+          max: 300,
+          unit: 'px',
+          step: 1.0,
+          snapInterval: 5.0,
+          onChanged: vm.setBrushThickness,
+        ),
+        const SizedBox(height: 12),
+        _SliderRow(
+          label: 'Opacity',
+          value: state.brushOpacity,
+          min: 0.05,
+          max: 1.0,
+          unit: '',
+          step: 0.1,
+          onChanged: vm.setBrushOpacity,
+        ),
+        const SizedBox(height: 12),
+        _FillColorPicker(
+          current: state.shapeFillColor,
+          onChanged: vm.setShapeFillColor,
+        ),
+      ],
+    );
+  }
+}
+
+class _BrushSettings extends StatelessWidget {
+  const _BrushSettings({required this.state, required this.vm});
+
+  final EditorState state;
+  final EditorViewModel vm;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Brush Settings',
+          style: theme.textTheme.titleMedium
+              ?.copyWith(fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 12),
+        _SliderRow(
+          label: 'Thickness',
+          value: state.brushThickness,
+          min: 0.5,
+          max: 300,
+          unit: 'px',
+          step: 1.0,
+          snapInterval: 5.0,
+          onChanged: vm.setBrushThickness,
+        ),
+        const SizedBox(height: 12),
+        _SliderRow(
+          label: 'Opacity',
+          value: state.brushOpacity,
+          min: 0.05,
+          max: 1.0,
+          unit: '',
+          step: 0.1,
+          onChanged: vm.setBrushOpacity,
+        ),
+        const SizedBox(height: 12),
+        _SliderRow(
+          label: 'Smoothness',
+          value: state.brushSmoothness,
+          min: 0.0,
+          max: 1.0,
+          unit: '',
+          step: 0.1,
+          onChanged: vm.setBrushSmoothness,
+        ),
+      ],
     );
   }
 }
@@ -131,5 +194,63 @@ class _SliderRow extends StatelessWidget {
     final snap = snapInterval!;
     final snapped = (v / snap).round() * snap;
     return snapped.clamp(min, max);
+  }
+}
+
+class _FillColorPicker extends StatelessWidget {
+  const _FillColorPicker({
+    required this.current,
+    required this.onChanged,
+  });
+
+  final Color? current;
+  final ValueChanged<Color?> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final color = current;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Fill color',
+          style: theme.textTheme.bodyMedium
+              ?.copyWith(fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 6),
+        Row(
+          children: [
+            GestureDetector(
+              onTap: () async {
+                final picked = await showAdaptiveColorPicker(
+                  context: context,
+                  initialColor: color ?? Colors.white,
+                );
+                if (picked != null) {
+                  onChanged(picked);
+                }
+              },
+              child: Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: color ?? Colors.transparent,
+                  border: Border.all(
+                    color: theme.colorScheme.onSurface.withOpacity(0.3),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            TextButton(
+              onPressed: () => onChanged(null),
+              child: const Text('No fill'),
+            ),
+          ],
+        ),
+      ],
+    );
   }
 }
