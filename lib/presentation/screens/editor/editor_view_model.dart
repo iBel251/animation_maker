@@ -1,4 +1,5 @@
 import 'dart:ui';
+import 'dart:math' as math;
 
 import 'package:animation_maker/domain/models/shape.dart';
 import 'package:animation_maker/domain/services/quadtree.dart';
@@ -8,6 +9,7 @@ import 'package:animation_maker/presentation/painting/raster_controller.dart';
 import 'package:animation_maker/presentation/painting/raster_stroke.dart';
 import 'package:animation_maker/presentation/screens/editor/history_manager.dart';
 import 'package:animation_maker/presentation/screens/editor/shape_transformer.dart';
+import 'package:animation_maker/presentation/screens/editor/clipboard_service.dart';
 import 'package:animation_maker/presentation/screens/editor/tool_state_toggles.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:perfect_freehand/perfect_freehand.dart';
@@ -37,6 +39,11 @@ class EditorState {
     required this.inProgressStroke,
     required this.palmRejectionEnabled,
     required this.brushVectorMode,
+    required this.groupingEnabled,
+    required this.currentGroupId,
+    required this.transformGroupAsOne,
+    required this.pivotSnapEnabled,
+    required this.pivotSnapStrength,
     this.shapeFillColor,
   });
 
@@ -58,6 +65,11 @@ class EditorState {
         inProgressStroke: const <PointVector>[],
         palmRejectionEnabled: false,
         brushVectorMode: false,
+        groupingEnabled: false,
+        currentGroupId: null,
+        transformGroupAsOne: false,
+        pivotSnapEnabled: true,
+        pivotSnapStrength: 0.5,
         shapeFillColor: null,
       );
 
@@ -78,7 +90,12 @@ class EditorState {
   final List<PointVector> inProgressStroke;
   final bool palmRejectionEnabled;
   final bool brushVectorMode;
+  final bool groupingEnabled;
+  final String? currentGroupId;
+  final bool transformGroupAsOne;
   final Color? shapeFillColor;
+  final bool pivotSnapEnabled;
+  final double pivotSnapStrength;
 
   EditorState copyWith({
     List<Shape>? shapes,
@@ -99,7 +116,12 @@ class EditorState {
     List<PointVector>? inProgressStroke,
     bool? palmRejectionEnabled,
     bool? brushVectorMode,
+    bool? groupingEnabled,
+    String? currentGroupId,
+    bool? transformGroupAsOne,
     Color? shapeFillColor,
+    bool? pivotSnapEnabled,
+    double? pivotSnapStrength,
   }) {
     return EditorState(
       shapes: shapes ?? this.shapes,
@@ -123,7 +145,13 @@ class EditorState {
       palmRejectionEnabled:
           palmRejectionEnabled ?? this.palmRejectionEnabled,
       brushVectorMode: brushVectorMode ?? this.brushVectorMode,
+      groupingEnabled: groupingEnabled ?? this.groupingEnabled,
+      currentGroupId: currentGroupId ?? this.currentGroupId,
+      transformGroupAsOne:
+          transformGroupAsOne ?? this.transformGroupAsOne,
       shapeFillColor: shapeFillColor ?? this.shapeFillColor,
+      pivotSnapEnabled: pivotSnapEnabled ?? this.pivotSnapEnabled,
+      pivotSnapStrength: pivotSnapStrength ?? this.pivotSnapStrength,
     );
   }
 }
@@ -134,6 +162,8 @@ class EditorViewModel extends Notifier<EditorState> {
   final RasterController _rasterController = RasterController();
   final HistoryManager _history = HistoryManager();
   final ToolStateToggles _toolToggles = ToolStateToggles();
+  int _groupCounter = 0;
+  final EditorClipboard _clipboard = EditorClipboard();
   @override
   EditorState build() {
     _quadTree = QuadTree(boundary: _quadBoundary);
@@ -156,7 +186,15 @@ class EditorViewModel extends Notifier<EditorState> {
   bool _isDrawingStroke = false;
 
   void setActiveTool(EditorTool tool) {
-    state = _toolToggles.deactivatePan(state).copyWith(activeTool: tool);
+    final clearSelection = tool != EditorTool.select;
+    state = _toolToggles.deactivatePan(state).copyWith(
+      activeTool: tool,
+      selectedShapeId: clearSelection ? null : state.selectedShapeId,
+      clearSelection: clearSelection,
+      groupingEnabled:
+          tool == EditorTool.brush ? state.groupingEnabled : false,
+      currentGroupId: tool == EditorTool.brush ? state.currentGroupId : null,
+    );
     if (tool != EditorTool.brush && _isDrawingStroke) {
       _resetStrokeState();
       state = state.copyWith(inProgressStroke: const []);
@@ -164,6 +202,13 @@ class EditorViewModel extends Notifier<EditorState> {
     if (tool != EditorTool.shape) {
       _lastLineEnd = null;
     }
+  }
+
+  void setPivotSnap({bool? enabled, double? strength}) {
+    state = state.copyWith(
+      pivotSnapEnabled: enabled ?? state.pivotSnapEnabled,
+      pivotSnapStrength: strength ?? state.pivotSnapStrength,
+    );
   }
 
   void selectShape(String? shapeId) {
@@ -196,6 +241,7 @@ class EditorViewModel extends Notifier<EditorState> {
 
   bool get canUndo => _history.canUndo;
   bool get canRedo => _history.canRedo;
+  bool get canPaste => _clipboard.hasContent;
 
   Future<void> undo() async {
     final snap = _history.undo();
@@ -213,8 +259,115 @@ class EditorViewModel extends Notifier<EditorState> {
     state = state.copyWith(shapeDrawKind: kind);
   }
 
+  void copySelection() {
+    final id = state.selectedShapeId;
+    if (id == null) return;
+    final targets = _selectedGroupShapes();
+    if (targets.isEmpty) return;
+    _clipboard.copyShapes(targets);
+    // Emit a state copy to refresh listeners (e.g., enabling Paste button).
+    state = state.copyWith();
+  }
+
+  void pasteClipboard() {
+    if (!_clipboard.hasContent) return;
+    final clones = _clipboard.pasteClones(
+      _nextShapeId,
+      offset: const Offset(16, 16),
+    );
+    if (clones.isEmpty) return;
+    final updated = [...state.shapes, ...clones];
+    _setShapesAndRebuild(
+      updated,
+      selectedShapeId: clones.last.id,
+    );
+    _pushHistory();
+  }
+
+  void flipSelectedHorizontal() {
+    _flipSelected(horizontal: true);
+  }
+
+  void flipSelectedVertical() {
+    _flipSelected(vertical: true);
+  }
+
+  void _flipSelected({bool horizontal = false, bool vertical = false}) {
+    final id = state.selectedShapeId;
+    if (id == null) return;
+    final idx = state.shapes.indexWhere((s) => s.id == id);
+    if (idx == -1) return;
+    final target = state.shapes[idx];
+    final flipped = ShapeTransformer.flip(
+      shape: target,
+      horizontal: horizontal,
+      vertical: vertical,
+    );
+    final updated = List<Shape>.from(state.shapes);
+    updated[idx] = flipped;
+    _setShapesAndRebuild(updated, rebuildQuadTree: false);
+    _pushHistory();
+  }
+
+  void duplicateSelected() {
+    final targets = _selectedGroupShapes();
+    if (targets.isEmpty) return;
+    final newGroupId =
+        targets.first.groupId != null ? _nextGroupId() : null;
+    final clones = targets
+        .map(
+          (shape) => shape.copyWith(
+            id: _nextShapeId(),
+            groupId: newGroupId,
+            bounds: shape.bounds?.shift(const Offset(16, 16)),
+            points: shape.points.isNotEmpty
+                ? shape.points.map((p) => p + const Offset(16, 16)).toList()
+                : shape.points.toList(),
+          ),
+        )
+        .toList(growable: false);
+    final updated = [...state.shapes, ...clones];
+    _setShapesAndRebuild(
+      updated,
+      selectedShapeId: clones.last.id,
+    );
+    _pushHistory();
+  }
+
+  void deleteSelected() {
+    final indices = _selectedGroupIndices();
+    if (indices.isEmpty) return;
+    final updated = List<Shape>.from(state.shapes);
+    indices..sort((a, b) => b.compareTo(a))..forEach(updated.removeAt);
+    _setShapesAndRebuild(
+      updated,
+      clearSelection: true,
+      selectedShapeId: null,
+    );
+    _pushHistory();
+  }
+
   void setCurrentColor(Color color) {
     state = state.copyWith(currentColor: color);
+  }
+
+  /// Replace shapes by id with the provided transformed copies (no history push).
+  void applyTransformedShapes(List<Shape> transformed) {
+    if (transformed.isEmpty) return;
+    final map = {for (final s in transformed) s.id: s};
+    bool changed = false;
+    final updated = <Shape>[];
+    for (final s in state.shapes) {
+      final replacement = map[s.id];
+      if (replacement != null) {
+        updated.add(replacement);
+        changed = true;
+      } else {
+        updated.add(s);
+      }
+    }
+    if (!changed) return;
+    _setShapesAndRebuild(updated, rebuildQuadTree: false);
   }
 
   void togglePanMode() {
@@ -250,6 +403,21 @@ class EditorViewModel extends Notifier<EditorState> {
     state = state.copyWith(brushVectorMode: !state.brushVectorMode);
   }
 
+  void toggleGrouping() {
+    if (state.groupingEnabled) {
+      state = state.copyWith(groupingEnabled: false, currentGroupId: null);
+    } else {
+      state = state.copyWith(
+        groupingEnabled: true,
+        currentGroupId: _nextGroupId(),
+      );
+    }
+  }
+
+  void toggleTransformGroupAsOne() {
+    state = state.copyWith(transformGroupAsOne: !state.transformGroupAsOne);
+  }
+
   void setShapeFillColor(Color? color) {
     state = state.copyWith(shapeFillColor: color);
   }
@@ -259,19 +427,18 @@ class EditorViewModel extends Notifier<EditorState> {
     double? scale,
     bool addToHistory = false,
   }) {
-    final targetId = state.selectedShapeId;
-    if (targetId == null) return;
-    final idx = state.shapes.indexWhere((s) => s.id == targetId);
-    if (idx == -1) return;
-    final target = state.shapes[idx];
-    if (target.kind == ShapeKind.line && target.points.length < 2) return;
-    final updated = ShapeTransformer.applyTransform(
-      shape: target,
-      rotation: rotation,
-      scale: scale,
-    );
+    final indices = _selectedGroupIndices();
+    if (indices.isEmpty) return;
     final updatedShapes = List<Shape>.from(state.shapes);
-    updatedShapes[idx] = updated;
+    for (final idx in indices) {
+      final target = state.shapes[idx];
+      if (target.kind == ShapeKind.line && target.points.length < 2) continue;
+      updatedShapes[idx] = ShapeTransformer.applyTransform(
+        shape: target,
+        rotation: rotation,
+        scale: scale,
+      );
+    }
     _setShapesAndRebuild(updatedShapes, rebuildQuadTree: false);
     if (addToHistory) {
       _pushHistory();
@@ -285,50 +452,184 @@ class EditorViewModel extends Notifier<EditorState> {
     required double scaleY,
     String? shapeId,
   }) {
-    final targetId = shapeId ?? state.selectedShapeId;
-    if (targetId == null) return;
-    final idx = state.shapes.indexWhere((s) => s.id == targetId);
-    if (idx == -1) return;
-    final target = state.shapes[idx];
-    final clampedScaleX = scaleX.clamp(0.05, 100.0);
-    final clampedScaleY = scaleY.clamp(0.05, 100.0);
-
-    Shape updated = target;
-    final usesBounds =
-        target.kind == ShapeKind.rectangle || target.kind == ShapeKind.ellipse;
-    final bounds = baseBounds ?? target.bounds;
-
-    if (usesBounds && bounds != null) {
-      final center = bounds.center;
-      final halfW = bounds.width / 2 * clampedScaleX;
-      final halfH = bounds.height / 2 * clampedScaleY;
-      final newRect = Rect.fromLTRB(
-        center.dx - halfW,
-        center.dy - halfH,
-        center.dx + halfW,
-        center.dy + halfH,
-      );
-      updated = target.copyWith(bounds: newRect);
-    } else {
-      final points = basePoints ?? target.points.toList();
-      if (points.isNotEmpty) {
-        final boundsFromPoints = baseBounds ?? _shapeBounds(target);
-        final center = boundsFromPoints?.center ?? points.first;
-        final scaledPoints = points
-            .map(
-              (p) => Offset(
-                center.dx + (p.dx - center.dx) * clampedScaleX,
-                center.dy + (p.dy - center.dy) * clampedScaleY,
-              ),
-            )
-            .toList(growable: false);
-        updated = target.copyWith(points: scaledPoints, bounds: null);
-      }
-    }
+    final indices = _selectedGroupIndices();
+    if (indices.isEmpty) return;
+    final clampedScaleX = scaleX.clamp(0.05, 10.0);
+    final clampedScaleY = scaleY.clamp(0.05, 10.0);
 
     final updatedShapes = List<Shape>.from(state.shapes);
-    updatedShapes[idx] = updated;
+    for (final idx in indices) {
+      final target = state.shapes[idx];
+      final usesBounds = target.kind == ShapeKind.rectangle ||
+          target.kind == ShapeKind.ellipse;
+      // Use provided base bounds/points only when scaling a single shape; otherwise use each shape's own geometry.
+      final useShared = indices.length == 1;
+      final bounds = (useShared ? baseBounds : null) ??
+          target.bounds ??
+          _shapeBounds(target);
+
+      Shape updated = target;
+      if (usesBounds && bounds != null) {
+        final center = bounds.center;
+        final halfW = bounds.width / 2 * clampedScaleX;
+        final halfH = bounds.height / 2 * clampedScaleY;
+        final newRect = Rect.fromLTRB(
+          center.dx - halfW,
+          center.dy - halfH,
+          center.dx + halfW,
+          center.dy + halfH,
+        );
+        updated = target.copyWith(bounds: newRect);
+      } else {
+        final points = (useShared ? basePoints : null) ?? target.points.toList();
+        if (points.isNotEmpty) {
+          final boundsFromPoints =
+              (useShared ? baseBounds : null) ?? _shapeBounds(target);
+          final center = boundsFromPoints?.center ?? points.first;
+          final scaledPoints = points
+              .map(
+                (p) => Offset(
+                  center.dx + (p.dx - center.dx) * clampedScaleX,
+                  center.dy + (p.dy - center.dy) * clampedScaleY,
+                ),
+              )
+              .toList(growable: false);
+          updated = target.copyWith(points: scaledPoints, bounds: null);
+        }
+      }
+      updatedShapes[idx] = updated;
+    }
+
     _setShapesAndRebuild(updatedShapes, rebuildQuadTree: false);
+  }
+
+  /// Apply rotation around a common center using a snapshot of shapes.
+  void applyRotationFromSnapshot({
+    required List<Shape> baseShapes,
+    required Offset center,
+    required double deltaAngle,
+  }) {
+    if (baseShapes.isEmpty || deltaAngle == 0.0) return;
+    final updated = List<Shape>.from(state.shapes);
+    final ids = baseShapes.map((s) => s.id).toSet();
+    for (var i = 0; i < updated.length; i++) {
+      final current = updated[i];
+      if (!ids.contains(current.id)) continue;
+      final base = baseShapes.firstWhere((s) => s.id == current.id);
+      updated[i] = _rotateShapeFromCenter(base, center, deltaAngle);
+    }
+    _setShapesAndRebuild(updated, rebuildQuadTree: false);
+  }
+
+  /// Apply scaling to the current selection using a snapshot of base shapes and a common center.
+  void applyScaleFromSnapshot({
+    required List<Shape> baseShapes,
+    required Offset center,
+    required double scaleX,
+    required double scaleY,
+  }) {
+    if (baseShapes.isEmpty) return;
+    final sx = scaleX.clamp(0.05, 100.0);
+    final sy = scaleY.clamp(0.05, 100.0);
+    final updated = List<Shape>.from(state.shapes);
+    final ids = baseShapes.map((s) => s.id).toSet();
+    for (var i = 0; i < updated.length; i++) {
+      final current = updated[i];
+      if (!ids.contains(current.id)) continue;
+      final base = baseShapes.firstWhere((s) => s.id == current.id);
+      updated[i] = _scaleShapeFromCenter(base, center, sx, sy)
+          .copyWith(scale: base.scale);
+    }
+    _setShapesAndRebuild(updated, rebuildQuadTree: false);
+  }
+
+  Shape _scaleShapeFromCenter(
+    Shape base,
+    Offset center,
+    double scaleX,
+    double scaleY,
+  ) {
+    final bounds = base.bounds ?? _shapeBounds(base);
+    if (bounds != null &&
+        (base.kind == ShapeKind.rectangle || base.kind == ShapeKind.ellipse)) {
+      final corners = [
+        bounds.topLeft,
+        bounds.topRight,
+        bounds.bottomRight,
+        bounds.bottomLeft,
+      ];
+      var minX = double.infinity,
+          maxX = -double.infinity,
+          minY = double.infinity,
+          maxY = -double.infinity;
+      for (final c in corners) {
+        final dx = (c.dx - center.dx) * scaleX;
+        final dy = (c.dy - center.dy) * scaleY;
+        final sx = center.dx + dx;
+        final sy = center.dy + dy;
+        if (sx < minX) minX = sx;
+        if (sx > maxX) maxX = sx;
+        if (sy < minY) minY = sy;
+        if (sy > maxY) maxY = sy;
+      }
+      final newRect = Rect.fromLTRB(minX, minY, maxX, maxY);
+      return base.copyWith(bounds: newRect);
+    }
+
+    if (base.points.isNotEmpty) {
+      final scaled = base.points
+          .map(
+            (p) => Offset(
+              center.dx + (p.dx - center.dx) * scaleX,
+              center.dy + (p.dy - center.dy) * scaleY,
+            ),
+          )
+          .toList(growable: false);
+      return base.copyWith(points: scaled, bounds: null);
+    }
+
+    return base;
+  }
+
+  Shape _rotateShapeFromCenter(Shape base, Offset center, double deltaAngle) {
+    final bounds = base.bounds ?? _shapeBounds(base);
+    final baseCenter = bounds?.center ?? center;
+    final cosA = math.cos(deltaAngle);
+    final sinA = math.sin(deltaAngle);
+
+    Offset rotateOffset(Offset o) {
+      final dx = o.dx - center.dx;
+      final dy = o.dy - center.dy;
+      return Offset(
+        center.dx + dx * cosA - dy * sinA,
+        center.dy + dx * sinA + dy * cosA,
+      );
+    }
+
+    if (bounds != null && (base.kind == ShapeKind.rectangle || base.kind == ShapeKind.ellipse)) {
+      final newCenter = rotateOffset(bounds.center);
+      final delta = newCenter - bounds.center;
+      return base.copyWith(
+        bounds: bounds.shift(delta),
+        rotation: base.rotation + deltaAngle,
+        scale: base.scale,
+      );
+    }
+
+    if (base.points.isNotEmpty) {
+      final newCenter = rotateOffset(baseCenter);
+      final delta = newCenter - baseCenter;
+      final shifted = base.points
+          .map((p) => p + delta)
+          .toList(growable: false);
+      return base.copyWith(
+        points: shifted,
+        rotation: base.rotation + deltaAngle,
+        scale: base.scale,
+      );
+    }
+
+    return base.copyWith(rotation: base.rotation + deltaAngle, scale: base.scale);
   }
 
   void updateSelectedStroke({
@@ -336,18 +637,32 @@ class EditorViewModel extends Notifier<EditorState> {
     Color? strokeColor,
     bool addToHistory = true,
   }) {
-    final targetId = state.selectedShapeId;
-    if (targetId == null) return;
-    final index = state.shapes.indexWhere((s) => s.id == targetId);
-    if (index == -1) return;
+    final indices = _selectedGroupIndices();
+    if (indices.isEmpty) return;
 
-    final target = state.shapes[index];
-    final updated = target.copyWith(
-      strokeWidth: strokeWidth ?? target.strokeWidth,
-      strokeColor: strokeColor ?? target.strokeColor,
-    );
     final updatedShapes = List<Shape>.from(state.shapes);
-    updatedShapes[index] = updated;
+    for (final index in indices) {
+      final target = state.shapes[index];
+      updatedShapes[index] = target.copyWith(
+        strokeWidth: strokeWidth ?? target.strokeWidth,
+        strokeColor: strokeColor ?? target.strokeColor,
+      );
+    }
+    _setShapesAndRebuild(updatedShapes, rebuildQuadTree: false);
+    if (addToHistory) {
+      _pushHistory();
+    }
+  }
+
+  void updateSelectedFill(Color? fillColor, {bool addToHistory = true}) {
+    final indices = _selectedGroupIndices();
+    if (indices.isEmpty) return;
+
+    final updatedShapes = List<Shape>.from(state.shapes);
+    for (final index in indices) {
+      final target = state.shapes[index];
+      updatedShapes[index] = target.copyWith(fillColor: fillColor);
+    }
     _setShapesAndRebuild(updatedShapes, rebuildQuadTree: false);
     if (addToHistory) {
       _pushHistory();
@@ -401,6 +716,33 @@ class EditorViewModel extends Notifier<EditorState> {
     return 'shape-$_shapeCounter';
   }
 
+  String _nextGroupId() {
+    _groupCounter += 1;
+    return 'group-$_groupCounter';
+  }
+
+  List<int> _selectedGroupIndices() {
+    final targetId = state.selectedShapeId;
+    if (targetId == null) return const [];
+    final targetIndex = state.shapes.indexWhere((s) => s.id == targetId);
+    if (targetIndex == -1) return const [];
+    final groupId = state.shapes[targetIndex].groupId;
+    if (groupId == null) return [targetIndex];
+    final indices = <int>[];
+    for (var i = 0; i < state.shapes.length; i++) {
+      if (state.shapes[i].groupId == groupId) {
+        indices.add(i);
+      }
+    }
+    return indices;
+  }
+
+  List<Shape> _selectedGroupShapes() {
+    final indices = _selectedGroupIndices();
+    if (indices.isEmpty) return const [];
+    return indices.map((i) => state.shapes[i]).toList(growable: false);
+  }
+
   void startDrawing(Offset point) {
     if (state.activeTool != EditorTool.brush) return;
     if (_isDrawingStroke) return;
@@ -443,6 +785,13 @@ class EditorViewModel extends Notifier<EditorState> {
       state = state.copyWith(inProgressStroke: const []);
       return;
     }
+    String? strokeGroupId;
+    if (state.brushVectorMode && state.groupingEnabled) {
+      strokeGroupId = state.currentGroupId ?? _nextGroupId();
+      if (state.currentGroupId != strokeGroupId) {
+        state = state.copyWith(currentGroupId: strokeGroupId);
+      }
+    }
     final strokeResult = BrushStrokeFactory.build(
       asVector: state.brushVectorMode,
       vectorId: _nextShapeId(),
@@ -455,13 +804,18 @@ class EditorViewModel extends Notifier<EditorState> {
       streamline: _strokeStreamline(state.brushSmoothness),
       simulatePressure: true,
       brushType: state.currentBrush,
+      groupId: strokeGroupId,
     );
 
     if (strokeResult.isVector && strokeResult.vectorShape != null) {
       final updatedShapes = [...state.shapes, strokeResult.vectorShape!];
+      final selectId = state.activeTool == EditorTool.select
+          ? strokeResult.vectorShape!.id
+          : null;
       _setShapesAndRebuild(
         updatedShapes,
-        selectedShapeId: strokeResult.vectorShape!.id,
+        selectedShapeId: selectId,
+        clearSelection: selectId == null,
       );
       state = state.copyWith(inProgressStroke: const []);
       _pushHistory();
@@ -590,15 +944,14 @@ class EditorViewModel extends Notifier<EditorState> {
   }
 
   void moveSelectedBy(Offset delta) {
-    final targetId = state.selectedShapeId;
-    if (targetId == null) return;
-    final index = state.shapes.indexWhere((s) => s.id == targetId);
-    if (index == -1) return;
+    final indices = _selectedGroupIndices();
+    if (indices.isEmpty) return;
 
-    final target = state.shapes[index];
-    final moved = _translateShape(target, delta);
     final updated = List<Shape>.from(state.shapes);
-    updated[index] = moved;
+    for (final index in indices) {
+      final target = state.shapes[index];
+      updated[index] = _translateShape(target, delta);
+    }
     _setShapesAndRebuild(updated, rebuildQuadTree: false);
   }
 
@@ -650,7 +1003,7 @@ class EditorViewModel extends Notifier<EditorState> {
     return shape.copyWith(
       bounds: shiftedBounds,
       points: shiftedPoints ?? shape.points.toList(),
-      translation: shape.translation + delta,
+      translation: shape.translation,
     );
   }
 

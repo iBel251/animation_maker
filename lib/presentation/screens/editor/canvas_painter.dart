@@ -4,8 +4,11 @@ import 'dart:math' as math;
 import 'package:animation_maker/domain/models/shape.dart';
 import 'package:animation_maker/presentation/painting/brush_renderer.dart';
 import 'package:animation_maker/presentation/painting/brushes/brush_type.dart';
+import 'selection_handles.dart';
+import 'fill_utils.dart';
 import 'package:flutter/material.dart';
 import 'package:perfect_freehand/perfect_freehand.dart';
+import 'package:vector_math/vector_math_64.dart' show Matrix4;
 
 class CanvasPainter extends CustomPainter {
   CanvasPainter({
@@ -21,6 +24,9 @@ class CanvasPainter extends CustomPainter {
     this.brushType,
     this.showSelectionHandles = false,
     this.viewportScale = 1.0,
+    this.rotationGuideCenter,
+    this.rotationGuideAngle,
+    this.pivotSnapGuide,
   });
 
   final List<Shape> shapes;
@@ -35,6 +41,9 @@ class CanvasPainter extends CustomPainter {
   final BrushType? brushType;
   final bool showSelectionHandles;
   final double viewportScale;
+  final Offset? rotationGuideCenter;
+  final double? rotationGuideAngle;
+  final Offset? pivotSnapGuide;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -42,7 +51,159 @@ class CanvasPainter extends CustomPainter {
       canvas.drawImage(rasterLayer!, Offset.zero, Paint());
     }
 
-    // Live brush stroke preview (raster-only brush data).
+    // Shapes are painted in list order; later shapes render on top.
+    for (final shape in shapes) {
+      final renderer = _rendererFor(shape.brushType);
+      final baseAlpha = shape.strokeColor.alpha / 255.0;
+      final baseBounds = shape.bounds ?? _shapeBoundsFromPoints(shape.points);
+      final matrix = shape.matrixForRect(baseBounds ?? Rect.zero);
+      final strokeScale = _strokeScaleFor(shape);
+      final effectiveStrokeWidth =
+          strokeScale <= 0.0001 ? shape.strokeWidth : shape.strokeWidth / strokeScale;
+      final paint = renderer.decoratePaint(
+        Paint()
+          ..color = shape.strokeColor.withValues(
+            alpha: (baseAlpha * shape.opacity).clamp(0, 1),
+          )
+          ..strokeWidth = effectiveStrokeWidth,
+      );
+
+      switch (shape.kind) {
+        case ShapeKind.freehand:
+          _withShapeTransform(canvas, matrix, () {
+            final fillPath = FillUtils.buildFillPath(shape);
+            if (fillPath != null && shape.fillColor != null) {
+              final fillPaint = Paint()
+                ..color = shape.fillColor!.withValues(
+                  alpha: (shape.fillColor!.alpha / 255.0 * shape.opacity).clamp(
+                    0,
+                    1,
+                  ),
+                )
+                ..style = PaintingStyle.fill;
+              canvas.drawPath(fillPath, fillPaint);
+            }
+            final path = _buildFreehandPath(shape, renderer);
+            if (path != null) {
+              // Freehand strokes are filled paths; stroke width is baked into the outline.
+              final fill = renderer.decoratePaint(
+                Paint()
+                  ..color = shape.strokeColor.withValues(
+                    alpha: (baseAlpha * shape.opacity).clamp(0, 1),
+                  )
+                  ..style = PaintingStyle.fill,
+              );
+              canvas.drawPath(path, fill);
+              canvas.drawPath(path, paint);
+            }
+          });
+          if (selectedShapeId == shape.id && baseBounds != null) {
+            _drawSelection(
+              canvas,
+              transformedCorners(baseBounds, shape.matrixForRect(baseBounds)),
+              pivotWorld: _pivotWorld(baseBounds, shape),
+              pivotSnapGuide: pivotSnapGuide,
+            );
+          }
+          break;
+        case ShapeKind.polygon:
+        case ShapeKind.line:
+          _withShapeTransform(canvas, matrix, () {
+            final path = _buildPolyline(
+              shape.points,
+              closePath: shape.kind == ShapeKind.polygon,
+            );
+            if (path != null) {
+              if (shape.fillColor != null && shape.kind == ShapeKind.polygon) {
+                final fill = Paint()
+                  ..color = shape.fillColor!.withValues(
+                    alpha: (shape.fillColor!.alpha / 255.0 * shape.opacity)
+                        .clamp(0, 1),
+                  )
+                  ..style = PaintingStyle.fill;
+                canvas.drawPath(path, fill);
+              }
+              paint.style = PaintingStyle.stroke;
+              paint.strokeWidth = effectiveStrokeWidth;
+              canvas.drawPath(path, paint);
+            }
+          });
+          if (selectedShapeId == shape.id && baseBounds != null) {
+            _drawSelection(
+              canvas,
+              transformedCorners(
+                baseBounds,
+                matrix,
+              ),
+              pivotWorld: _pivotWorld(baseBounds, shape),
+              pivotSnapGuide: pivotSnapGuide,
+            );
+          }
+          break;
+        case ShapeKind.rectangle:
+          _withShapeTransform(canvas, matrix, () {
+            final rect = shape.bounds;
+            if (rect != null) {
+              if (shape.fillColor != null) {
+                final fill = Paint()
+                  ..color = shape.fillColor!.withValues(
+                    alpha: (shape.fillColor!.alpha / 255.0 * shape.opacity)
+                        .clamp(0, 1),
+                  )
+                  ..style = PaintingStyle.fill;
+                canvas.drawRect(rect, fill);
+              }
+              paint.style = PaintingStyle.stroke;
+              paint.strokeWidth = effectiveStrokeWidth;
+              canvas.drawRect(rect, paint);
+            }
+          });
+          if (selectedShapeId == shape.id && shape.bounds != null) {
+            _drawSelection(
+              canvas,
+              transformedCorners(
+                shape.bounds!,
+                shape.matrixForRect(shape.bounds!),
+              ),
+              pivotWorld: _pivotWorld(shape.bounds!, shape),
+              pivotSnapGuide: pivotSnapGuide,
+            );
+          }
+          break;
+        case ShapeKind.ellipse:
+          _withShapeTransform(canvas, matrix, () {
+            final rect = shape.bounds;
+            if (rect != null) {
+              if (shape.fillColor != null) {
+                final fill = Paint()
+                  ..color = shape.fillColor!.withValues(
+                    alpha: (shape.fillColor!.alpha / 255.0 * shape.opacity)
+                        .clamp(0, 1),
+                  )
+                  ..style = PaintingStyle.fill;
+                canvas.drawOval(rect, fill);
+              }
+              paint.style = PaintingStyle.stroke;
+              paint.strokeWidth = effectiveStrokeWidth;
+              canvas.drawOval(rect, paint);
+            }
+          });
+          if (selectedShapeId == shape.id && shape.bounds != null) {
+            _drawSelection(
+              canvas,
+              transformedCorners(
+                shape.bounds!,
+                shape.matrixForRect(shape.bounds!),
+              ),
+              pivotWorld: _pivotWorld(shape.bounds!, shape),
+              pivotSnapGuide: pivotSnapGuide,
+            );
+          }
+          break;
+      }
+    }
+
+    // Live brush stroke preview should draw above shapes.
     if (inProgressStroke.isNotEmpty) {
       final renderer = _rendererFor(brushType);
       final path = _buildFreehandPathFromPoints(
@@ -54,111 +215,19 @@ class CanvasPainter extends CustomPainter {
       if (path != null) {
         final baseAlpha = brushColor.alpha / 255.0;
         final paint = Paint()
-          ..color = brushColor
-              .withValues(alpha: (baseAlpha * brushOpacity).clamp(0, 1))
+          ..color = brushColor.withValues(
+            alpha: (baseAlpha * brushOpacity).clamp(0, 1),
+          )
           ..style = PaintingStyle.fill;
         canvas.drawPath(path, paint);
       }
     }
-
-    // Shapes are painted in list order; later shapes render on top.
-    for (final shape in shapes) {
-      final renderer = _rendererFor(shape.brushType);
-      final baseAlpha = shape.strokeColor.alpha / 255.0;
-      final baseBounds = shape.bounds ?? _shapeBoundsFromPoints(shape.points);
-      final paint = renderer.decoratePaint(
-        Paint()
-          ..color = shape.strokeColor
-              .withValues(alpha: (baseAlpha * shape.opacity).clamp(0, 1))
-          ..strokeWidth = shape.strokeWidth,
-      );
-
-      switch (shape.kind) {
-        case ShapeKind.freehand:
-          _withShapeTransform(canvas, shape, () {
-            final path = _buildFreehandPath(shape, renderer);
-            if (path != null) {
-              // Freehand strokes are filled paths; stroke width is baked into the outline.
-              final fill = renderer.decoratePaint(
-                Paint()
-                  ..color = shape.strokeColor
-                      .withValues(alpha: (baseAlpha * shape.opacity).clamp(0, 1))
-                  ..style = PaintingStyle.fill,
-              );
-              canvas.drawPath(path, fill);
-              canvas.drawPath(path, paint);
-            }
-          });
-          if (selectedShapeId == shape.id && baseBounds != null) {
-            _drawSelection(canvas, _transformedCorners(baseBounds, shape.rotation, shape.scale));
-          }
-          break;
-        case ShapeKind.polygon:
-        case ShapeKind.line:
-          _withShapeTransform(canvas, shape, () {
-            final path = _buildPolyline(
-              shape.points,
-              closePath: shape.kind == ShapeKind.polygon,
-            );
-            if (path != null) {
-              if (shape.fillColor != null && shape.kind == ShapeKind.polygon) {
-                final fill = Paint()
-                  ..color = shape.fillColor!
-                      .withValues(alpha: (shape.fillColor!.alpha / 255.0 * shape.opacity).clamp(0, 1))
-                  ..style = PaintingStyle.fill;
-                canvas.drawPath(path, fill);
-              }
-              paint.style = PaintingStyle.stroke;
-              canvas.drawPath(path, paint);
-              if (selectedShapeId == shape.id) {
-                _drawSelection(canvas, _transformedCorners(path.getBounds(), shape.rotation, shape.scale));
-              }
-            }
-          });
-          break;
-        case ShapeKind.rectangle:
-          _withShapeTransform(canvas, shape, () {
-            final rect = shape.bounds;
-            if (rect != null) {
-              if (shape.fillColor != null) {
-                final fill = Paint()
-                  ..color = shape.fillColor!
-                      .withValues(alpha: (shape.fillColor!.alpha / 255.0 * shape.opacity).clamp(0, 1))
-                  ..style = PaintingStyle.fill;
-                canvas.drawRect(rect, fill);
-              }
-              paint.style = PaintingStyle.stroke;
-              canvas.drawRect(rect, paint);
-            }
-          });
-          if (selectedShapeId == shape.id && shape.bounds != null) {
-            _drawSelection(canvas, _transformedCorners(shape.bounds!, shape.rotation, shape.scale));
-          }
-          break;
-        case ShapeKind.ellipse:
-          _withShapeTransform(canvas, shape, () {
-            final rect = shape.bounds;
-            if (rect != null) {
-              if (shape.fillColor != null) {
-                final fill = Paint()
-                  ..color = shape.fillColor!
-                      .withValues(alpha: (shape.fillColor!.alpha / 255.0 * shape.opacity).clamp(0, 1))
-                  ..style = PaintingStyle.fill;
-                canvas.drawOval(rect, fill);
-              }
-              paint.style = PaintingStyle.stroke;
-              canvas.drawOval(rect, paint);
-            }
-          });
-          if (selectedShapeId == shape.id && shape.bounds != null) {
-            _drawSelection(canvas, _transformedCorners(shape.bounds!, shape.rotation, shape.scale));
-          }
-          break;
-      }
-    }
   }
 
-  Path? _buildFreehandPath(Shape shape, BrushRenderer renderer) {
+  Path? _buildFreehandPath(
+    Shape shape,
+    BrushRenderer renderer,
+  ) {
     if (shape.points.isEmpty) return null;
     final smooth = _strokeSmoothing(brushSmoothness);
     final streamline = _strokeStreamline(brushSmoothness);
@@ -214,7 +283,12 @@ class CanvasPainter extends CustomPainter {
     return path;
   }
 
-  void _drawSelection(Canvas canvas, List<Offset> corners) {
+  void _drawSelection(
+    Canvas canvas,
+    List<Offset> corners, {
+    Offset? pivotWorld,
+    Offset? pivotSnapGuide,
+  }) {
     if (corners.length != 4) return;
     final path = Path()..moveTo(corners.first.dx, corners.first.dy);
     for (var i = 1; i < corners.length; i++) {
@@ -233,6 +307,21 @@ class CanvasPainter extends CustomPainter {
 
     if (!showSelectionHandles) return;
     _drawHandles(canvas, corners);
+    if (pivotWorld != null) {
+      _drawPivot(canvas, pivotWorld);
+      if (pivotSnapGuide != null) {
+        _drawPivotGuide(canvas, pivotWorld, pivotSnapGuide);
+      }
+    }
+
+    if (rotationGuideCenter != null && rotationGuideAngle != null) {
+      _drawRotationGuide(
+        canvas,
+        rotationGuideCenter!,
+        rotationGuideAngle!,
+        corners,
+      );
+    }
   }
 
   @override
@@ -244,7 +333,10 @@ class CanvasPainter extends CustomPainter {
         oldDelegate.brushThickness != brushThickness ||
         oldDelegate.brushOpacity != brushOpacity ||
         oldDelegate.brushSmoothness != brushSmoothness ||
-        oldDelegate.brushColor != brushColor;
+        oldDelegate.brushColor != brushColor ||
+        oldDelegate.rotationGuideAngle != rotationGuideAngle ||
+        oldDelegate.rotationGuideCenter != rotationGuideCenter ||
+        oldDelegate.pivotSnapGuide != pivotSnapGuide;
   }
 
   double _strokeSmoothing(double slider) =>
@@ -263,27 +355,6 @@ class CanvasPainter extends CustomPainter {
     }
   }
 
-  void _withShapeTransform(
-    Canvas canvas,
-    Shape shape,
-    VoidCallback draw,
-  ) {
-    final bounds = shape.bounds ?? _shapeBoundsFromPoints(shape.points);
-    if (bounds == null ||
-        (shape.rotation == 0.0 && shape.scale == 1.0)) {
-      draw();
-      return;
-    }
-    final center = bounds.center;
-    canvas.save();
-    canvas.translate(center.dx, center.dy);
-    canvas.rotate(shape.rotation);
-    canvas.scale(shape.scale);
-    canvas.translate(-center.dx, -center.dy);
-    draw();
-    canvas.restore();
-  }
-
   Rect? _shapeBoundsFromPoints(List<Offset> points) {
     if (points.isEmpty) return null;
     double minX = points.first.dx;
@@ -299,27 +370,18 @@ class CanvasPainter extends CustomPainter {
     return Rect.fromLTRB(minX, minY, maxX, maxY);
   }
 
-  List<Offset> _transformedCorners(Rect rect, double rotation, double scale) {
-    final cx = rect.center.dx;
-    final cy = rect.center.dy;
-    final corners = <Offset>[
-      Offset(rect.left, rect.top),
-      Offset(rect.right, rect.top),
-      Offset(rect.right, rect.bottom),
-      Offset(rect.left, rect.bottom),
-    ];
-    if (rotation == 0.0 && scale == 1.0) return corners;
-    final cosA = math.cos(rotation);
-    final sinA = math.sin(rotation);
-    return corners
-        .map((c) {
-          final dx = (c.dx - cx) * scale;
-          final dy = (c.dy - cy) * scale;
-          final rx = dx * cosA - dy * sinA + cx;
-          final ry = dx * sinA + dy * cosA + cy;
-          return Offset(rx, ry);
-        })
-        .toList(growable: false);
+  void _withShapeTransform(Canvas canvas, Matrix4 matrix, VoidCallback draw) {
+    canvas.save();
+    canvas.transform(matrix.storage);
+    draw();
+    canvas.restore();
+  }
+
+  double _strokeScaleFor(Shape shape) {
+    final sx = shape.scaleX.abs();
+    final sy = shape.scaleY.abs();
+    final maxScale = sx > sy ? sx : sy;
+    return maxScale <= 0.0001 ? 1.0 : maxScale;
   }
 
   void _drawHandles(Canvas canvas, List<Offset> corners) {
@@ -356,7 +418,7 @@ class CanvasPainter extends CustomPainter {
       topCenterEdge,
       rightCenterEdge,
       bottomCenterEdge,
-      leftCenterEdge
+      leftCenterEdge,
     ];
     for (final c in edgeCenters) {
       canvas.drawCircle(c, size * 0.45, handlePaint);
@@ -378,5 +440,58 @@ class CanvasPainter extends CustomPainter {
       canvas.drawLine(topCenter, handleCenter, handlePaint..strokeWidth = 1);
     }
   }
-}
 
+  void _drawPivot(Canvas canvas, Offset pivot) {
+    final size = 12 / viewportScale;
+    final half = size / 2;
+    final paint = Paint()
+      ..color = const Color(0xFF1E88E5)
+      ..style = PaintingStyle.fill;
+    canvas.drawCircle(pivot, half * 0.6, paint);
+    final stroke = Paint()
+      ..color = const Color(0xFF1E88E5)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2;
+    canvas.drawLine(pivot + Offset(-half, 0), pivot + Offset(half, 0), stroke);
+    canvas.drawLine(pivot + Offset(0, -half), pivot + Offset(0, half), stroke);
+  }
+
+  void _drawPivotGuide(Canvas canvas, Offset pivot, Offset target) {
+    if ((pivot - target).distance < 0.5) return;
+    final guidePaint = Paint()
+      ..color = const Color(0xFF1E88E5)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 3.0
+      ..strokeCap = StrokeCap.round;
+    canvas.drawLine(pivot, target, guidePaint);
+  }
+
+  Offset _pivotWorld(Rect base, Shape shape) {
+    final origin = base.center;
+    return shape.translation + origin + shape.transform.pivot;
+  }
+
+  void _drawRotationGuide(
+    Canvas canvas,
+    Offset center,
+    double angle,
+    List<Offset> corners,
+  ) {
+    final radius = _guideRadius(corners);
+    final end =
+        center + Offset(math.cos(angle) * radius, math.sin(angle) * radius);
+    final guidePaint = Paint()
+      ..color = const Color(0xFF1E88E5)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2
+      ..strokeCap = StrokeCap.round;
+    canvas.drawLine(center, end, guidePaint);
+  }
+
+  double _guideRadius(List<Offset> corners) {
+    if (corners.length != 4) return 80;
+    final width = (corners[0] - corners[1]).distance;
+    final height = (corners[1] - corners[2]).distance;
+    return (math.max(width, height) / 2) + 24;
+  }
+}

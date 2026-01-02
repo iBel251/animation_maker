@@ -14,6 +14,7 @@ class ToolSettingsPanel extends ConsumerWidget {
     final vm = ref.read(editorViewModelProvider.notifier);
     final isBrush = state.activeTool == EditorTool.brush;
     final isShape = state.activeTool == EditorTool.shape;
+    final isSelect = state.activeTool == EditorTool.select;
 
     return Container(
       color: Colors.grey.shade50,
@@ -22,15 +23,17 @@ class ToolSettingsPanel extends ConsumerWidget {
           ? _BrushSettings(state: state, vm: vm)
           : isShape
               ? _ShapeSettings(state: state, vm: vm)
-              : Center(
-                  child: Text(
-                    'Select a tool to see settings',
-                    style: Theme.of(context)
-                        .textTheme
-                        .bodySmall
-                        ?.copyWith(color: Colors.grey.shade600),
-                  ),
-                ),
+              : isSelect
+                  ? _SelectSettings(state: state, vm: vm)
+                  : Center(
+                      child: Text(
+                        'Select a tool to see settings',
+                        style: Theme.of(context)
+                            .textTheme
+                            .bodySmall
+                            ?.copyWith(color: Colors.grey.shade600),
+                      ),
+                    ),
     );
   }
 }
@@ -77,6 +80,82 @@ class _ShapeSettings extends StatelessWidget {
         _FillColorPicker(
           current: state.shapeFillColor,
           onChanged: vm.setShapeFillColor,
+        ),
+      ],
+    );
+  }
+}
+
+class _SelectSettings extends StatelessWidget {
+  const _SelectSettings({required this.state, required this.vm});
+
+  final EditorState state;
+  final EditorViewModel vm;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final enabled = state.pivotSnapEnabled;
+    final strength = state.pivotSnapStrength;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Selection Settings',
+          style: theme.textTheme.titleMedium
+              ?.copyWith(fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 12),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              'Pivot snap',
+              style: theme.textTheme.labelSmall
+                  ?.copyWith(fontWeight: FontWeight.w600),
+            ),
+            Switch(
+              value: enabled,
+              onChanged: (v) => vm.setPivotSnap(enabled: v),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Opacity(
+          opacity: enabled ? 1 : 0.4,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text('Snap strength', style: theme.textTheme.labelSmall),
+                  Text(
+                    strength.toStringAsFixed(2),
+                    style: theme.textTheme.labelSmall
+                        ?.copyWith(color: Colors.grey.shade700),
+                  ),
+                ],
+              ),
+              SliderTheme(
+                data: SliderTheme.of(context).copyWith(
+                  trackHeight: 6,
+                  thumbShape: const RoundSliderThumbShape(
+                    enabledThumbRadius: 7,
+                  ),
+                ),
+                child: Slider(
+                  value: strength.clamp(0, 1),
+                  min: 0,
+                  max: 1,
+                  divisions: 20,
+                  onChanged:
+                      enabled ? (v) => vm.setPivotSnap(strength: v) : null,
+                  activeColor: theme.colorScheme.primary,
+                ),
+              ),
+            ],
+          ),
         ),
       ],
     );

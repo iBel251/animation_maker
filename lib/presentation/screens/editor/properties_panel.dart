@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'editor_view_model.dart';
 import 'package:animation_maker/domain/models/shape.dart';
 import '../../widgets/adaptive_color_picker.dart';
+import 'fill_utils.dart';
 
 class PropertiesPanel extends ConsumerStatefulWidget {
   const PropertiesPanel({super.key, this.shapeCount});
@@ -41,8 +42,11 @@ class _PropertiesPanelState extends ConsumerState<PropertiesPanel> {
     final selectedId = ref.watch(
       editorViewModelProvider.select((state) => state.selectedShapeId),
     );
-    final shapes = widget.shapeCount ??
-        ref.watch(editorViewModelProvider.select((state) => state.shapes.length));
+    final shapes =
+        widget.shapeCount ??
+        ref.watch(
+          editorViewModelProvider.select((state) => state.shapes.length),
+        );
     final currentColor = ref.watch(
       editorViewModelProvider.select((state) => state.currentColor),
     );
@@ -77,10 +81,9 @@ class _PropertiesPanelState extends ConsumerState<PropertiesPanel> {
                     const SizedBox(height: 12),
                     Text(
                       'Shapes: $shapes',
-                      style: Theme.of(context)
-                          .textTheme
-                          .labelMedium
-                          ?.copyWith(color: Colors.grey.shade700),
+                      style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                        color: Colors.grey.shade700,
+                      ),
                     ),
                   ],
                 )
@@ -89,41 +92,52 @@ class _PropertiesPanelState extends ConsumerState<PropertiesPanel> {
                   children: [
                     Text(
                       'Shape: $selectedId',
-                      style: Theme.of(context)
-                          .textTheme
-                          .labelMedium
-                          ?.copyWith(fontWeight: FontWeight.w600),
+                      style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                     const SizedBox(height: 12),
                     _sectionTitle(context, 'Position'),
-                    _numberRow(
+                    _stepperGrid(
                       context,
-                      label: 'X',
-                      controller: _xCtrl,
-                      onSubmit: (v) => _updatePosition(x: v),
+                      items: [
+                        _StepperItem(
+                          label: 'X',
+                          value: _xCtrl.text,
+                          onStep: (delta) => _nudgePosition(xDelta: delta),
+                          fullWidth: true,
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 8),
-                    _numberRow(
+                    _stepperGrid(
                       context,
-                      label: 'Y',
-                      controller: _yCtrl,
-                      onSubmit: (v) => _updatePosition(y: v),
+                      items: [
+                        _StepperItem(
+                          label: 'Y',
+                          value: _yCtrl.text,
+                          onStep: (delta) => _nudgePosition(yDelta: delta),
+                          fullWidth: true,
+                        ),
+                      ],
                     ),
                     if (_hasBounds(selectedShape)) ...[
                       const SizedBox(height: 12),
                       _sectionTitle(context, 'Size'),
-                      _numberRow(
+                      _stepperGrid(
                         context,
-                        label: 'W',
-                        controller: _wCtrl,
-                        onSubmit: (v) => _updateSize(width: v),
-                      ),
-                      const SizedBox(height: 8),
-                      _numberRow(
-                        context,
-                        label: 'H',
-                        controller: _hCtrl,
-                        onSubmit: (v) => _updateSize(height: v),
+                        items: [
+                          _StepperItem(
+                            label: 'W',
+                            value: _wCtrl.text,
+                            onStep: (delta) => _nudgeSize(widthDelta: delta),
+                          ),
+                          _StepperItem(
+                            label: 'H',
+                            value: _hCtrl.text,
+                            onStep: (delta) => _nudgeSize(heightDelta: delta),
+                          ),
+                        ],
                       ),
                     ],
                     const SizedBox(height: 12),
@@ -134,44 +148,30 @@ class _PropertiesPanelState extends ConsumerState<PropertiesPanel> {
                     ),
                     const SizedBox(height: 12),
                     _sectionTitle(context, 'Color'),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: IconButton(
-                        tooltip: 'Pick color',
-                        onPressed: () async {
-                          final picked = await showAdaptiveColorPicker(
-                            context: context,
-                            initialColor: selectedShape.strokeColor,
-                          );
-                          if (picked != null) {
-                            ref
-                                .read(editorViewModelProvider.notifier)
-                                .updateSelectedStroke(strokeColor: picked);
-                          }
-                        },
-                        icon: Container(
-                          width: 32,
-                          height: 32,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: selectedShape.strokeColor,
-                            border: Border.all(
-                              color: Theme.of(context)
-                                  .colorScheme
-                                  .onSurface
-                                  .withOpacity(0.25),
-                            ),
-                          ),
-                        ),
-                      ),
+                    _swatchRow(
+                      context,
+                      label: 'Stroke',
+                      color: selectedShape.strokeColor,
+                      onPick: () async {
+                        final picked = await showAdaptiveColorPicker(
+                          context: context,
+                          initialColor: selectedShape.strokeColor,
+                        );
+                        if (picked != null) {
+                          ref
+                              .read(editorViewModelProvider.notifier)
+                              .updateSelectedStroke(strokeColor: picked);
+                        }
+                      },
                     ),
+                    const SizedBox(height: 8),
+                    _fillControls(context, selectedShape),
                     const SizedBox(height: 12),
                     Text(
                       'Shapes: $shapes',
-                      style: Theme.of(context)
-                          .textTheme
-                          .labelMedium
-                          ?.copyWith(color: Colors.grey.shade700),
+                      style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                        color: Colors.grey.shade700,
+                      ),
                     ),
                   ],
                 ),
@@ -227,10 +227,108 @@ class _PropertiesPanelState extends ConsumerState<PropertiesPanel> {
   Widget _sectionTitle(BuildContext context, String text) {
     return Text(
       text,
-      style: Theme.of(context)
-          .textTheme
-          .labelMedium
-          ?.copyWith(fontWeight: FontWeight.w600),
+      style: Theme.of(
+        context,
+      ).textTheme.labelMedium?.copyWith(fontWeight: FontWeight.w600),
+    );
+  }
+
+  Widget _stepperGrid(
+    BuildContext context, {
+    required List<_StepperItem> items,
+  }) {
+    final theme = Theme.of(context);
+    return Column(
+      children: items
+          .map(
+            (item) => Container(
+              width: double.infinity,
+              margin: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                border: Border.all(
+                  color: theme.colorScheme.outline.withOpacity(0.2),
+                ),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    item.label,
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      _miniButton(
+                        context,
+                        icon: Icons.remove,
+                        onTap: () => item.onStep(-item.step),
+                        onHold: () => item.onStep(-item.step),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 6,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.grey.shade100,
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            item.value,
+                            style: theme.textTheme.labelSmall,
+                            overflow: TextOverflow.ellipsis,
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      _miniButton(
+                        context,
+                        icon: Icons.add,
+                        onTap: () => item.onStep(item.step),
+                        onHold: () => item.onStep(item.step),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          )
+          .toList(),
+    );
+  }
+
+  Widget _miniButton(
+    BuildContext context, {
+    required IconData icon,
+    required VoidCallback onTap,
+    VoidCallback? onHold,
+  }) {
+    final theme = Theme.of(context);
+    return GestureDetector(
+      onTap: onTap,
+      onLongPressStart: (_) => onHold?.call(),
+      child: SizedBox(
+        width: 22,
+        height: 22,
+        child: Material(
+          color: theme.colorScheme.primary.withOpacity(0.08),
+          borderRadius: BorderRadius.circular(4),
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(4),
+            child: Icon(icon, size: 16, color: theme.colorScheme.primary),
+          ),
+        ),
+      ),
     );
   }
 
@@ -244,16 +342,15 @@ class _PropertiesPanelState extends ConsumerState<PropertiesPanel> {
       children: [
         SizedBox(
           width: 32,
-          child: Text(
-            label,
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
+          child: Text(label, style: Theme.of(context).textTheme.bodySmall),
         ),
         Expanded(
           child: TextField(
             controller: controller,
-            keyboardType:
-                const TextInputType.numberWithOptions(decimal: true, signed: true),
+            keyboardType: const TextInputType.numberWithOptions(
+              decimal: true,
+              signed: true,
+            ),
             decoration: const InputDecoration(
               isDense: true,
               contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
@@ -269,29 +366,65 @@ class _PropertiesPanelState extends ConsumerState<PropertiesPanel> {
 
   Widget _strokeControls(BuildContext context, {required double strokeWidth}) {
     final theme = Theme.of(context);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _numberRow(
-          context,
-          label: 'Stroke',
-          controller: _strokeCtrl,
-          onSubmit: (v) => _updateStrokeWidth(v),
-        ),
-        Slider(
-          value: strokeWidth.clamp(1, 20),
-          min: 1,
-          max: 20,
-          divisions: 19,
-          label: strokeWidth.toStringAsFixed(1),
-          onChanged: (v) {
-            _strokeCtrl.text = v.toStringAsFixed(1);
-            _updateStrokeWidth(v, addToHistory: false);
-          },
-          onChangeEnd: (v) => _updateStrokeWidth(v, addToHistory: true),
-          activeColor: theme.colorScheme.primary,
-        ),
-      ],
+    return Container(
+      padding: EdgeInsets.zero,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: theme.colorScheme.outline.withOpacity(0.15)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Stroke width',
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade100,
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    '${strokeWidth.toStringAsFixed(1)} px',
+                    style: theme.textTheme.labelSmall,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 2),
+          SliderTheme(
+            data: SliderTheme.of(context).copyWith(
+              trackHeight: 6,
+              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 8),
+            ),
+            child: Slider(
+              value: strokeWidth.clamp(0.5, 40),
+              min: 0.5,
+              max: 40,
+              divisions: 79,
+              onChanged: (v) {
+                _strokeCtrl.text = v.toStringAsFixed(1);
+                _updateStrokeWidth(v, addToHistory: false);
+              },
+              onChangeEnd: (v) => _updateStrokeWidth(v, addToHistory: true),
+              activeColor: theme.colorScheme.primary,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -355,17 +488,13 @@ class _PropertiesPanelState extends ConsumerState<PropertiesPanel> {
   }
 
   void _updatePosition({double? x, double? y}) {
-    ref.read(editorViewModelProvider.notifier).updateSelectedBounds(
-          x: x,
-          y: y,
-        );
+    ref.read(editorViewModelProvider.notifier).updateSelectedBounds(x: x, y: y);
   }
 
   void _updateSize({double? width, double? height}) {
-    ref.read(editorViewModelProvider.notifier).updateSelectedBounds(
-          width: width,
-          height: height,
-        );
+    ref
+        .read(editorViewModelProvider.notifier)
+        .updateSelectedBounds(width: width, height: height);
   }
 
   void _updateStrokeWidth(double? width, {bool addToHistory = true}) {
@@ -373,6 +502,28 @@ class _PropertiesPanelState extends ConsumerState<PropertiesPanel> {
     ref
         .read(editorViewModelProvider.notifier)
         .updateSelectedStroke(strokeWidth: width, addToHistory: addToHistory);
+  }
+
+  void _nudgePosition({double? xDelta, double? yDelta}) {
+    final xVal = double.tryParse(_xCtrl.text);
+    final yVal = double.tryParse(_yCtrl.text);
+    _updatePosition(
+      x: xDelta != null && xVal != null ? xVal + xDelta : null,
+      y: yDelta != null && yVal != null ? yVal + yDelta : null,
+    );
+  }
+
+  void _nudgeSize({double? widthDelta, double? heightDelta}) {
+    final wVal = double.tryParse(_wCtrl.text);
+    final hVal = double.tryParse(_hCtrl.text);
+    _updateSize(
+      width: widthDelta != null && wVal != null
+          ? (wVal + widthDelta).clamp(0, double.infinity)
+          : null,
+      height: heightDelta != null && hVal != null
+          ? (hVal + heightDelta).clamp(0, double.infinity)
+          : null,
+    );
   }
 
   // Color parsing helpers retained for potential future use.
@@ -390,11 +541,128 @@ class _PropertiesPanelState extends ConsumerState<PropertiesPanel> {
   String _colorToHex(Color color, {bool includeAlpha = true}) {
     final value = includeAlpha
         ? color.value
-        : (0xFF << 24) |
-            (color.red << 16) |
-            (color.green << 8) |
-            color.blue;
+        : (0xFF << 24) | (color.red << 16) | (color.green << 8) | color.blue;
     return '#${value.toRadixString(16).padLeft(8, '0').toUpperCase()}';
+  }
+
+  Widget _swatchRow(
+    BuildContext context, {
+    required String label,
+    required Color color,
+    required Future<void> Function() onPick,
+  }) {
+    final theme = Theme.of(context);
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(
+          label,
+          style: theme.textTheme.labelSmall?.copyWith(
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        IconButton(
+          tooltip: 'Pick $label color',
+          onPressed: onPick,
+          icon: Container(
+            width: 32,
+            height: 32,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: color,
+              border: Border.all(
+                color: theme.colorScheme.onSurface.withOpacity(0.25),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _fillControls(BuildContext context, Shape shape) {
+    final canFill = FillUtils.canFill(shape);
+    final theme = Theme.of(context);
+    final vm = ref.read(editorViewModelProvider.notifier);
+
+    return Opacity(
+      opacity: canFill ? 1 : 0.5,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Fill',
+                style: theme.textTheme.labelSmall?.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              IconButton(
+                tooltip: canFill
+                    ? 'Pick fill color'
+                    : 'Fill requires a closed shape',
+                onPressed: canFill
+                    ? () async {
+                        final picked = await showAdaptiveColorPicker(
+                          context: context,
+                          initialColor: shape.fillColor ?? shape.strokeColor,
+                        );
+                        if (picked != null) {
+                          vm.updateSelectedFill(picked);
+                        }
+                      }
+                    : null,
+                icon: Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: shape.fillColor ?? Colors.transparent,
+                    border: Border.all(
+                      color: theme.colorScheme.onSurface.withOpacity(0.25),
+                    ),
+                  ),
+                  child: shape.fillColor == null
+                      ? Icon(
+                          Icons.close,
+                          size: 16,
+                          color: theme.colorScheme.onSurface.withOpacity(0.4),
+                        )
+                      : null,
+                ),
+              ),
+            ],
+          ),
+          if (!canFill)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                'Fill works for closed shapes only',
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: Colors.grey.shade600,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
   }
 }
 
+class _StepperItem {
+  const _StepperItem({
+    required this.label,
+    required this.value,
+    required this.onStep,
+    this.step = 1,
+    this.fullWidth = false,
+  });
+
+  final String label;
+  final String value;
+  final double step;
+  final void Function(double delta) onStep;
+  final bool fullWidth;
+}

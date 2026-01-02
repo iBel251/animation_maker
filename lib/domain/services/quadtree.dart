@@ -109,8 +109,10 @@ class QuadTree {
 Rect? _shapeBounds(Shape shape) {
   final base = shape.bounds ?? _boundsFromPoints(shape.points);
   if (base == null) return null;
-  if (shape.rotation == 0.0 && shape.scale == 1.0) return base;
-  return _transformedAabb(base, shape.rotation, shape.scale);
+  if (shape.rotation == 0.0 && shape.scaleX == 1.0 && shape.scaleY == 1.0) {
+    return base;
+  }
+  return _transformedAabb(base, shape.rotation, shape.scaleX, shape.scaleY);
 }
 
 Rect? _boundsFromPoints(List<Offset> points) {
@@ -133,7 +135,7 @@ Rect? _boundsFromPoints(List<Offset> points) {
   return Rect.fromLTRB(minX, minY, maxX, maxY);
 }
 
-Rect _transformedAabb(Rect rect, double rotation, double scale) {
+Rect _transformedAabb(Rect rect, double rotation, double scaleX, double scaleY) {
   final cx = rect.center.dx;
   final cy = rect.center.dy;
   final corners = <Offset>[
@@ -147,8 +149,8 @@ Rect _transformedAabb(Rect rect, double rotation, double scale) {
   double minX = double.infinity, minY = double.infinity;
   double maxX = -double.infinity, maxY = -double.infinity;
   for (final c in corners) {
-    final dx = (c.dx - cx) * scale;
-    final dy = (c.dy - cy) * scale;
+    final dx = (c.dx - cx) * scaleX;
+    final dy = (c.dy - cy) * scaleY;
     final rx = dx * cosA - dy * sinA + cx;
     final ry = dx * sinA + dy * cosA + cy;
     if (rx < minX) minX = rx;

@@ -13,6 +13,10 @@ class BottomActionBar extends ConsumerWidget {
     final vm = ref.read(editorViewModelProvider.notifier);
     final canUndo = vm.canUndo;
     final canRedo = vm.canRedo;
+    final selectedId =
+        ref.watch(editorViewModelProvider.select((s) => s.selectedShapeId));
+    final canCopy = selectedId != null;
+    final canPaste = vm.canPaste;
 
     final theme = Theme.of(context);
     return Material(
@@ -40,9 +44,17 @@ class BottomActionBar extends ConsumerWidget {
                 onPressed: canRedo ? vm.redo : null,
               ),
               const SizedBox(width: 8),
-              const _ActionIcon(icon: Icons.copy, label: 'Copy'),
+              _ActionIcon(
+                icon: Icons.copy,
+                label: 'Copy',
+                onPressed: canCopy ? vm.copySelection : null,
+              ),
               const SizedBox(width: 8),
-              const _ActionIcon(icon: Icons.paste, label: 'Paste'),
+              _ActionIcon(
+                icon: Icons.paste,
+                label: 'Paste',
+                onPressed: canPaste ? vm.pasteClipboard : null,
+              ),
               const SizedBox(width: 8),
               const _ActionIcon(icon: Icons.layers, label: 'Layers'),
             ],

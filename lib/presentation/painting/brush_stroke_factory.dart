@@ -3,6 +3,7 @@ import 'dart:ui';
 import 'package:animation_maker/domain/models/shape.dart';
 import 'package:animation_maker/presentation/painting/brushes/brush_type.dart';
 import 'package:animation_maker/presentation/painting/raster_stroke.dart';
+import 'package:animation_maker/presentation/screens/editor/fill_utils.dart';
 import 'package:perfect_freehand/perfect_freehand.dart';
 
 class BrushStrokeResult {
@@ -31,6 +32,7 @@ class BrushStrokeFactory {
     required double streamline,
     required bool simulatePressure,
     required BrushType brushType,
+    String? groupId,
   }) {
     if (asVector) {
       final offsets =
@@ -43,6 +45,8 @@ class BrushStrokeFactory {
         strokeWidth: thickness,
         opacity: opacity,
         brushType: brushType,
+        isClosed: FillUtils.isFreehandClosedPoints(offsets),
+        groupId: groupId,
       );
       return BrushStrokeResult.vector(shape);
     }
