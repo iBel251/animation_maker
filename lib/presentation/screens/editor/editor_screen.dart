@@ -9,6 +9,7 @@ import 'editor_view_model.dart';
 import 'tool_settings_panel.dart';
 import 'bottom_action_bar.dart';
 import 'selection_action_bar.dart';
+import 'group_selection_action_bar.dart';
 
 class EditorScreen extends ConsumerWidget {
   const EditorScreen({super.key});
@@ -58,6 +59,7 @@ class EditorScreen extends ConsumerWidget {
               ],
             ),
             const SelectionActionBar(),
+            const GroupSelectionActionBar(),
             Consumer(
               builder: (context, ref, _) {
                 final isOpen = ref.watch(

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'editor_view_model.dart';
+import 'selection_types.dart';
 import '../../widgets/adaptive_color_picker.dart';
 import '../../widgets/brush_type_picker.dart';
 import '../../widgets/shape_type_picker.dart';
@@ -33,6 +34,9 @@ class EditorAppBar extends ConsumerWidget implements PreferredSizeWidget {
     final shapeDrawKind = ref.watch(
       editorViewModelProvider.select((state) => state.shapeDrawKind),
     );
+    final selectionMode = ref.watch(
+      editorViewModelProvider.select((state) => state.selectionMode),
+    );
     final isPanMode = ref.watch(
       editorViewModelProvider.select((state) => state.isPanMode),
     );
@@ -45,6 +49,7 @@ class EditorAppBar extends ConsumerWidget implements PreferredSizeWidget {
       required EditorTool tool,
       required IconData icon,
       required String tooltip,
+      Future<void> Function()? onActivePress,
     }) {
       final theme = Theme.of(context);
       final isActive = activeTool == tool;
@@ -62,7 +67,15 @@ class EditorAppBar extends ConsumerWidget implements PreferredSizeWidget {
           borderRadius: BorderRadius.circular(8),
         ),
         child: IconButton(
-          onPressed: () => viewModel.setActiveTool(tool),
+          onPressed: () async {
+            if (!isActive) {
+              viewModel.setActiveTool(tool);
+            } else {
+              if (onActivePress != null) {
+                await onActivePress();
+              }
+            }
+          },
           icon: Icon(icon),
           tooltip: tooltip,
           color: fg,
@@ -206,7 +219,16 @@ class EditorAppBar extends ConsumerWidget implements PreferredSizeWidget {
       toolButton(
         tool: EditorTool.select,
         icon: Icons.ads_click,
-        tooltip: 'Select',
+        tooltip: 'Select (${_selectionModeLabel(selectionMode)})',
+        onActivePress: () async {
+          final picked = await _showSelectionModePicker(
+            context: context,
+            current: selectionMode,
+          );
+          if (picked != null) {
+            viewModel.setSelectionMode(picked);
+          }
+        },
       ),
       IconButton(
         onPressed: () {
@@ -231,6 +253,63 @@ class EditorAppBar extends ConsumerWidget implements PreferredSizeWidget {
       ],
     );
   }
+}
+
+String _selectionModeLabel(SelectionMode mode) {
+  switch (mode) {
+    case SelectionMode.single:
+      return 'Single';
+    case SelectionMode.lasso:
+      return 'Lasso';
+    case SelectionMode.multi:
+      return 'Multi';
+    case SelectionMode.all:
+      return 'All';
+  }
+}
+
+Future<SelectionMode?> _showSelectionModePicker({
+  required BuildContext context,
+  required SelectionMode current,
+}) {
+  return showDialog<SelectionMode>(
+    context: context,
+    builder: (context) {
+      return SimpleDialog(
+        title: const Text('Selection mode'),
+        children: [
+          _selectionOption(context, SelectionMode.single, current, 'Single select'),
+          _selectionOption(context, SelectionMode.lasso, current, 'Lasso select'),
+          _selectionOption(context, SelectionMode.multi, current, 'Multi select'),
+          _selectionOption(context, SelectionMode.all, current, 'Select all'),
+        ],
+      );
+    },
+  );
+}
+
+Widget _selectionOption(
+  BuildContext context,
+  SelectionMode mode,
+  SelectionMode current,
+  String label,
+) {
+  final theme = Theme.of(context);
+  final isCurrent = mode == current;
+  return SimpleDialogOption(
+    onPressed: () => Navigator.of(context).pop(mode),
+    child: Row(
+      children: [
+        Icon(
+          isCurrent ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+          color: isCurrent ? theme.colorScheme.primary : theme.iconTheme.color,
+          size: 20,
+        ),
+        const SizedBox(width: 8),
+        Text(label),
+      ],
+    ),
+  );
 }
 
 Color? _parseHexColor(String input) {

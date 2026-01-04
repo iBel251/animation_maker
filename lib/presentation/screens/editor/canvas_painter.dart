@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:animation_maker/domain/models/shape.dart';
 import 'package:animation_maker/presentation/painting/brush_renderer.dart';
 import 'package:animation_maker/presentation/painting/brushes/brush_type.dart';
+import 'selection_types.dart';
 import 'selection_handles.dart';
 import 'fill_utils.dart';
 import 'package:flutter/material.dart';
@@ -14,6 +15,8 @@ class CanvasPainter extends CustomPainter {
   CanvasPainter({
     required this.shapes,
     required this.selectedShapeId,
+    this.selectedShapeIds = const <String>[],
+    required this.selectionMode,
     required this.rasterLayer,
     required this.inProgressStroke,
     required this.brushThickness,
@@ -31,6 +34,8 @@ class CanvasPainter extends CustomPainter {
 
   final List<Shape> shapes;
   final String? selectedShapeId;
+  final List<String> selectedShapeIds;
+  final SelectionMode selectionMode;
   final ui.Image? rasterLayer;
   final List<PointVector> inProgressStroke;
   final double brushThickness;
@@ -97,10 +102,11 @@ class CanvasPainter extends CustomPainter {
               canvas.drawPath(path, paint);
             }
           });
-          if (selectedShapeId == shape.id && baseBounds != null) {
+          if (_isSelected(shape.id) && baseBounds != null) {
             _drawSelection(
               canvas,
               transformedCorners(baseBounds, shape.matrixForRect(baseBounds)),
+              canvasBounds: Rect.fromLTWH(0, 0, size.width, size.height),
               pivotWorld: _pivotWorld(baseBounds, shape),
               pivotSnapGuide: pivotSnapGuide,
             );
@@ -128,13 +134,14 @@ class CanvasPainter extends CustomPainter {
               canvas.drawPath(path, paint);
             }
           });
-          if (selectedShapeId == shape.id && baseBounds != null) {
+          if (_isSelected(shape.id) && baseBounds != null) {
             _drawSelection(
               canvas,
               transformedCorners(
                 baseBounds,
                 matrix,
               ),
+              canvasBounds: Rect.fromLTWH(0, 0, size.width, size.height),
               pivotWorld: _pivotWorld(baseBounds, shape),
               pivotSnapGuide: pivotSnapGuide,
             );
@@ -158,13 +165,14 @@ class CanvasPainter extends CustomPainter {
               canvas.drawRect(rect, paint);
             }
           });
-          if (selectedShapeId == shape.id && shape.bounds != null) {
+          if (_isSelected(shape.id) && shape.bounds != null) {
             _drawSelection(
               canvas,
               transformedCorners(
                 shape.bounds!,
                 shape.matrixForRect(shape.bounds!),
               ),
+              canvasBounds: Rect.fromLTWH(0, 0, size.width, size.height),
               pivotWorld: _pivotWorld(shape.bounds!, shape),
               pivotSnapGuide: pivotSnapGuide,
             );
@@ -188,13 +196,14 @@ class CanvasPainter extends CustomPainter {
               canvas.drawOval(rect, paint);
             }
           });
-          if (selectedShapeId == shape.id && shape.bounds != null) {
+          if (_isSelected(shape.id) && shape.bounds != null) {
             _drawSelection(
               canvas,
               transformedCorners(
                 shape.bounds!,
                 shape.matrixForRect(shape.bounds!),
               ),
+              canvasBounds: Rect.fromLTWH(0, 0, size.width, size.height),
               pivotWorld: _pivotWorld(shape.bounds!, shape),
               pivotSnapGuide: pivotSnapGuide,
             );
@@ -286,6 +295,7 @@ class CanvasPainter extends CustomPainter {
   void _drawSelection(
     Canvas canvas,
     List<Offset> corners, {
+    required Rect canvasBounds,
     Offset? pivotWorld,
     Offset? pivotSnapGuide,
   }) {
@@ -306,7 +316,7 @@ class CanvasPainter extends CustomPainter {
     canvas.drawPath(path, highlightStroke);
 
     if (!showSelectionHandles) return;
-    _drawHandles(canvas, corners);
+    _drawHandles(canvas, corners, canvasBounds);
     if (pivotWorld != null) {
       _drawPivot(canvas, pivotWorld);
       if (pivotSnapGuide != null) {
@@ -328,6 +338,8 @@ class CanvasPainter extends CustomPainter {
   bool shouldRepaint(covariant CanvasPainter oldDelegate) {
     return oldDelegate.shapes != shapes ||
         oldDelegate.selectedShapeId != selectedShapeId ||
+        oldDelegate.selectedShapeIds != selectedShapeIds ||
+        oldDelegate.selectionMode != selectionMode ||
         oldDelegate.rasterLayer != rasterLayer ||
         oldDelegate.inProgressStroke != inProgressStroke ||
         oldDelegate.brushThickness != brushThickness ||
@@ -384,7 +396,11 @@ class CanvasPainter extends CustomPainter {
     return maxScale <= 0.0001 ? 1.0 : maxScale;
   }
 
-  void _drawHandles(Canvas canvas, List<Offset> corners) {
+  void _drawHandles(
+    Canvas canvas,
+    List<Offset> corners,
+    Rect canvasBounds,
+  ) {
     if (corners.length != 4) return;
     final size = 10 / viewportScale;
     final half = size / 2;
@@ -431,14 +447,18 @@ class CanvasPainter extends CustomPainter {
       (corners[0].dx + corners[2].dx) / 2,
       (corners[0].dy + corners[2].dy) / 2,
     );
-    final dir = (topCenter - center);
-    final len = dir.distance;
-    if (len > 0) {
-      final norm = dir / len;
-      final handleCenter = center + norm * (len + 20 / viewportScale);
-      canvas.drawCircle(handleCenter, size * 0.6, handlePaint);
-      canvas.drawLine(topCenter, handleCenter, handlePaint..strokeWidth = 1);
-    }
+    final placement = _rotationHandlePlacement(
+      center: center,
+      edgeCenters: edgeCenters,
+      viewportScale: viewportScale,
+      canvasBounds: canvasBounds.deflate(size * 0.6),
+    );
+    canvas.drawCircle(placement.handle, size * 0.6, handlePaint);
+    canvas.drawLine(
+      placement.anchor,
+      placement.handle,
+      handlePaint..strokeWidth = 1,
+    );
   }
 
   void _drawPivot(Canvas canvas, Offset pivot) {
@@ -471,6 +491,34 @@ class CanvasPainter extends CustomPainter {
     return shape.translation + origin + shape.transform.pivot;
   }
 
+  _RotationHandlePlacement _rotationHandlePlacement({
+    required Offset center,
+    required List<Offset> edgeCenters,
+    required double viewportScale,
+    required Rect canvasBounds,
+  }) {
+    const double baseOffset = 20.0;
+    Offset? fallbackHandle;
+    Offset? fallbackAnchor;
+    for (final anchor in edgeCenters) {
+      final dir = anchor - center;
+      final len = dir.distance;
+      if (len <= 0) continue;
+      final norm = dir / len;
+      final candidate =
+          center + norm * (len + baseOffset / viewportScale);
+      fallbackHandle ??= candidate;
+      fallbackAnchor ??= anchor;
+      if (canvasBounds.contains(candidate)) {
+        return _RotationHandlePlacement(handle: candidate, anchor: anchor);
+      }
+    }
+    return _RotationHandlePlacement(
+      handle: fallbackHandle ?? center,
+      anchor: fallbackAnchor ?? center,
+    );
+  }
+
   void _drawRotationGuide(
     Canvas canvas,
     Offset center,
@@ -494,4 +542,24 @@ class CanvasPainter extends CustomPainter {
     final height = (corners[1] - corners[2]).distance;
     return (math.max(width, height) / 2) + 24;
   }
+
+  bool _isSelected(String id) {
+    if (selectedShapeId == id) return true;
+    if (selectionMode == SelectionMode.multi ||
+        selectionMode == SelectionMode.all ||
+        selectionMode == SelectionMode.lasso) {
+      return selectedShapeIds.contains(id);
+    }
+    return false;
+  }
+}
+
+class _RotationHandlePlacement {
+  const _RotationHandlePlacement({
+    required this.handle,
+    required this.anchor,
+  });
+
+  final Offset handle;
+  final Offset anchor;
 }

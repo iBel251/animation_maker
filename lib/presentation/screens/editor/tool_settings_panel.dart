@@ -97,6 +97,7 @@ class _SelectSettings extends StatelessWidget {
     final theme = Theme.of(context);
     final enabled = state.pivotSnapEnabled;
     final strength = state.pivotSnapStrength;
+    final flipPivot = state.pivotFlipWithObject;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -156,6 +157,21 @@ class _SelectSettings extends StatelessWidget {
               ),
             ],
           ),
+        ),
+        const SizedBox(height: 12),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              'Pivot flips with shape',
+              style: theme.textTheme.labelSmall
+                  ?.copyWith(fontWeight: FontWeight.w600),
+            ),
+            Switch(
+              value: flipPivot,
+              onChanged: vm.setPivotFlipWithObject,
+            ),
+          ],
         ),
       ],
     );

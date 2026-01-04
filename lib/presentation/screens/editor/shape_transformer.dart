@@ -76,41 +76,31 @@ class ShapeTransformer {
     required Shape shape,
     bool horizontal = false,
     bool vertical = false,
+    bool flipPivotWithObject = true,
   }) {
     if (!horizontal && !vertical) return shape;
     final base = _baseBounds(shape);
     if (base == null) return shape;
     final center = base.center;
-
-    // Flip point-based shapes by reflecting their points.
-    if (shape.points.isNotEmpty) {
-      final flippedPoints = shape.points
-          .map(
-            (p) => Offset(
-              horizontal ? (2 * center.dx - p.dx) : p.dx,
-              vertical ? (2 * center.dy - p.dy) : p.dy,
-            ),
-          )
-          .toList(growable: false);
-      return shape.copyWith(points: flippedPoints);
-    }
-
-    // For bound-only shapes: use negative scale to flip.
-    // Calculate world center, flip scale, adjust position to keep center fixed.
-    final localCenter = center;
-    final worldCenterBefore = _transformPoint(shape, localCenter);
-
     final newScaleX = horizontal ? -shape.scaleX : shape.scaleX;
     final newScaleY = vertical ? -shape.scaleY : shape.scaleY;
 
-    final tempShape = shape.copyWith(scaleX: newScaleX, scaleY: newScaleY);
-    final worldCenterAfter = _transformPoint(tempShape, localCenter);
-    final positionCorrection = worldCenterBefore - worldCenterAfter;
+    // When keeping the pivot fixed, leave translation unchanged so the pivot's world
+    // position stays in place while the shape flips around it. Otherwise, adjust
+    // translation to keep the shape's center fixed (current behavior).
+    Offset nextTranslation = shape.translation;
+    if (flipPivotWithObject) {
+      final worldCenterBefore = _transformPoint(shape, center);
+      final tempShape = shape.copyWith(scaleX: newScaleX, scaleY: newScaleY);
+      final worldCenterAfter = _transformPoint(tempShape, center);
+      final positionCorrection = worldCenterBefore - worldCenterAfter;
+      nextTranslation = shape.translation + positionCorrection;
+    }
 
     return shape.copyWith(
       scaleX: newScaleX,
       scaleY: newScaleY,
-      translation: shape.translation + positionCorrection,
+      translation: nextTranslation,
     );
   }
 

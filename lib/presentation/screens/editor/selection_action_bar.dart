@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'editor_view_model.dart';
+import 'selection_types.dart';
 
 class SelectionActionBar extends ConsumerWidget {
   const SelectionActionBar({super.key});
@@ -12,6 +13,8 @@ class SelectionActionBar extends ConsumerWidget {
         ref.watch(editorViewModelProvider.select((s) => s.selectedShapeId));
     final activeTool =
         ref.watch(editorViewModelProvider.select((s) => s.activeTool));
+    final selectionMode =
+        ref.watch(editorViewModelProvider.select((s) => s.selectionMode));
     final isVectorMode =
         ref.watch(editorViewModelProvider.select((s) => s.brushVectorMode));
     final groupingEnabled =
@@ -28,7 +31,8 @@ class SelectionActionBar extends ConsumerWidget {
     const double rightWidth = 220;
     final vm = ref.read(editorViewModelProvider.notifier);
     final hasSelection = selectedId != null;
-    final show = hasSelection || (activeTool == EditorTool.brush && isVectorMode);
+    final show = selectionMode == SelectionMode.single &&
+        (hasSelection || (activeTool == EditorTool.brush && isVectorMode));
     final theme = Theme.of(context);
     final horizontalPadding = EdgeInsets.only(
       left: leftOpen ? leftWidth + 8 : 8,

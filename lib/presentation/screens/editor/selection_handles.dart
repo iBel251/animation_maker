@@ -22,7 +22,12 @@ class HandleHit {
   final Offset? axis;
 }
 
-HandleHit? hitTestHandle(Shape shape, Offset posCanvas, double viewportScale) {
+HandleHit? hitTestHandle(
+  Shape shape,
+  Offset posCanvas,
+  double viewportScale, {
+  required Rect canvasBounds,
+}) {
   final base = shape.bounds ?? boundsFromPoints(shape.points);
   if (base == null) return null;
   final matrix = shape.matrixForRect(base);
@@ -34,6 +39,7 @@ HandleHit? hitTestHandle(Shape shape, Offset posCanvas, double viewportScale) {
   final handleSize = 12 / viewportScale;
   final half = handleSize / 2;
   final pivotRadius = handleSize * 0.8; // slightly larger hit for pivot
+  final safeBounds = canvasBounds.deflate(half);
 
   // Pivot handle: give it priority so overlaps favor the pivot.
   final pivotWorld = _pivotWorld(base, shape);
@@ -116,25 +122,25 @@ HandleHit? hitTestHandle(Shape shape, Offset posCanvas, double viewportScale) {
   }
 
   // Rotate handle above top edge.
-  final dir = (topCenter - center);
-  final len = dir.distance;
-  if (len > 0) {
-    final norm = dir / len;
-    final handleCenter = center + norm * (len + 20 / viewportScale);
-    final rect = Rect.fromCircle(center: handleCenter, radius: half);
-    if (rect.contains(posCanvas)) {
-      final dist = (posCanvas - center).distance;
-      final angle = math.atan2(
-        posCanvas.dy - center.dy,
-        posCanvas.dx - center.dx,
-      );
-      return HandleHit(
-        type: TransformHandle.rotate,
-        center: center,
-        startDistance: dist,
-        startAngle: angle,
-      );
-    }
+  final rotationHandle = _rotationHandlePosition(
+    center: center,
+    edgeCenters: [topCenter, rightCenter, bottomCenter, leftCenter],
+    viewportScale: viewportScale,
+    canvasBounds: safeBounds,
+  );
+  final rect = Rect.fromCircle(center: rotationHandle, radius: half);
+  if (rect.contains(posCanvas)) {
+    final dist = (posCanvas - center).distance;
+    final angle = math.atan2(
+      posCanvas.dy - center.dy,
+      posCanvas.dx - center.dx,
+    );
+    return HandleHit(
+      type: TransformHandle.rotate,
+      center: center,
+      startDistance: dist,
+      startAngle: angle,
+    );
   }
 
   return null;
@@ -184,4 +190,26 @@ Rect? boundsFromPoints(List<Offset> points) {
 Offset _pivotWorld(Rect base, Shape shape) {
   final origin = base.center;
   return shape.translation + origin + shape.transform.pivot;
+}
+
+Offset _rotationHandlePosition({
+  required Offset center,
+  required List<Offset> edgeCenters,
+  required double viewportScale,
+  required Rect canvasBounds,
+}) {
+  const double baseOffset = 20.0;
+  Offset? fallback;
+  for (final edgeCenter in edgeCenters) {
+    final dir = edgeCenter - center;
+    final len = dir.distance;
+    if (len <= 0) continue;
+    final norm = dir / len;
+    final candidate = center + norm * (len + baseOffset / viewportScale);
+    fallback ??= candidate;
+    if (canvasBounds.contains(candidate)) {
+      return candidate;
+    }
+  }
+  return fallback ?? center;
 }

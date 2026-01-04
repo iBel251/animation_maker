@@ -3,12 +3,14 @@ import 'dart:ui' as ui;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/scheduler.dart';
 import 'dart:math' as math;
 import 'package:animation_maker/domain/models/shape.dart';
 import 'package:vector_math/vector_math_64.dart' show Matrix4, Vector3;
 
 import 'canvas_painter.dart';
 import 'editor_view_model.dart';
+import 'selection_types.dart';
 import 'snap_service.dart';
 import 'selection_handles.dart';
 import 'transform_session.dart';
@@ -48,6 +50,10 @@ class _CanvasAreaState extends ConsumerState<CanvasArea> {
   Offset? _handleAxis;
   List<Shape>? _handleBaseShapes;
   TransformSession? _transformSession;
+  Offset? _lassoStartScene;
+  Offset? _lassoStartScreen;
+  Rect? _lassoRectScene;
+  Rect? _lassoRectScreen;
 
   static const double _minScale = 0.25;
   static const double _maxScale = 8.0;
@@ -66,9 +72,21 @@ class _CanvasAreaState extends ConsumerState<CanvasArea> {
   }
 
   void _handleTransformChanged() {
-    setState(() {
-      _currentScale = _controller.value.getMaxScaleOnAxis();
-    });
+    if (!mounted) return;
+    final nextScale = _controller.value.getMaxScaleOnAxis();
+    if (SchedulerBinding.instance.schedulerPhase ==
+        SchedulerPhase.persistentCallbacks) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        setState(() {
+          _currentScale = nextScale;
+        });
+      });
+    } else {
+      setState(() {
+        _currentScale = nextScale;
+      });
+    }
   }
 
   @override
@@ -77,8 +95,14 @@ class _CanvasAreaState extends ConsumerState<CanvasArea> {
     final selectedShapeId = ref.watch(
       editorViewModelProvider.select((s) => s.selectedShapeId),
     );
+    final selectedShapeIds = ref.watch(
+      editorViewModelProvider.select((s) => s.selectedShapeIds),
+    );
     final activeTool = ref.watch(
       editorViewModelProvider.select((s) => s.activeTool),
+    );
+    final selectionMode = ref.watch(
+      editorViewModelProvider.select((s) => s.selectionMode),
     );
     final isPanMode = ref.watch(
       editorViewModelProvider.select((s) => s.isPanMode),
@@ -153,6 +177,8 @@ class _CanvasAreaState extends ConsumerState<CanvasArea> {
           painter: CanvasPainter(
             shapes: shapes,
             selectedShapeId: selectedShapeId,
+            selectedShapeIds: selectedShapeIds,
+            selectionMode: selectionMode,
             rasterLayer: raster,
             inProgressStroke: inProgressStroke,
             brushThickness: brushThickness,
@@ -161,7 +187,10 @@ class _CanvasAreaState extends ConsumerState<CanvasArea> {
             brushColor: brushColor,
             brushType: brushType,
             showSelectionHandles:
-                activeTool == EditorTool.select && selectedShapeId != null,
+                activeTool == EditorTool.select &&
+                selectionMode == SelectionMode.single &&
+                selectedShapeId != null &&
+                (selectedShapeIds.length <= 1),
             viewportScale: _currentScale,
             rotationGuideCenter: _rotationSnapCenter,
             rotationGuideAngle: _rotationSnapAngle,
@@ -190,6 +219,12 @@ class _CanvasAreaState extends ConsumerState<CanvasArea> {
         );
 
         final navActive = isPanMode;
+        final canvasBounds = Rect.fromLTWH(
+          0,
+          0,
+          _designSize.width,
+          _designSize.height,
+        );
 
         // InteractiveViewer handles pinch-zoom (always enabled) and single-finger pan only in pan mode.
         final viewer = InteractiveViewer(
@@ -238,11 +273,27 @@ class _CanvasAreaState extends ConsumerState<CanvasArea> {
 
           final pos = _toCanvas(event.localPosition);
 
-          if (activeTool == EditorTool.select && selectedShape != null) {
+          if (activeTool == EditorTool.select &&
+              selectedShape != null &&
+              selectionMode == SelectionMode.single) {
+            // If another shape sits under the tap, switch selection immediately
+            // to avoid needing a second tap when handles are in the way.
+            final topShape = vm.topShapeAtPoint(pos);
+            if (topShape != null && topShape.id != selectedShapeId) {
+              vm.selectShape(topShape.id);
+              _activePointer = event.pointer;
+              return;
+            }
+
             final baseBounds =
                 selectedShape!.bounds ??
                 _boundsFromPoints(selectedShape!.points);
-            final hit = hitTestHandle(selectedShape!, pos, _currentScale);
+            final hit = hitTestHandle(
+              selectedShape!,
+              pos,
+              _currentScale,
+              canvasBounds: canvasBounds,
+            );
             if (hit != null) {
               // Capture a snapshot of shapes to apply consistent transforms.
               _handleBaseShapes = transformGroupAsOne
@@ -307,6 +358,20 @@ class _CanvasAreaState extends ConsumerState<CanvasArea> {
               vm.startShapeDrawing(pos);
               break;
             case EditorTool.select:
+              if (selectionMode == SelectionMode.lasso) {
+                _activePointer = event.pointer;
+                _lassoStartScene = pos;
+                _lassoStartScreen = event.localPosition;
+                _lassoRectScene = Rect.fromLTWH(pos.dx, pos.dy, 0, 0);
+                _lassoRectScreen = Rect.fromLTWH(
+                  _lassoStartScreen!.dx,
+                  _lassoStartScreen!.dy,
+                  0,
+                  0,
+                );
+                setState(() {});
+                return;
+              }
               vm.selectAtPoint(pos);
               break;
           }
@@ -318,6 +383,21 @@ class _CanvasAreaState extends ConsumerState<CanvasArea> {
           if (navNow) return;
 
           final pos = _toCanvas(event.localPosition);
+
+          if (activeTool == EditorTool.select &&
+              selectionMode == SelectionMode.lasso &&
+              _lassoStartScene != null &&
+              _lassoStartScreen != null &&
+              _activePointer == event.pointer) {
+            setState(() {
+              _lassoRectScene = Rect.fromPoints(_lassoStartScene!, pos);
+              _lassoRectScreen = Rect.fromPoints(
+                _lassoStartScreen!,
+                event.localPosition,
+              );
+            });
+            return;
+          }
 
           if (_activeHandle != null &&
               _handleCenter != null &&
@@ -386,7 +466,8 @@ class _CanvasAreaState extends ConsumerState<CanvasArea> {
                 _handleLastAngle = angle;
                 break;
               case TransformHandle.pivot:
-                if (_handleBaseBounds == null || _handleBaseShape == null) break;
+                if (_handleBaseBounds == null || _handleBaseShape == null)
+                  break;
                 final base = _handleBaseBounds!;
                 final baseShape = _handleBaseShape!;
 
@@ -422,6 +503,9 @@ class _CanvasAreaState extends ConsumerState<CanvasArea> {
               vm.updateShapeDrawing(pos);
               break;
             case EditorTool.select:
+              if (selectionMode != SelectionMode.single) {
+                return;
+              }
               vm.moveSelectedBy(event.delta / _currentScale);
               break;
           }
@@ -434,6 +518,26 @@ class _CanvasAreaState extends ConsumerState<CanvasArea> {
 
           if (_pointerCount < 2) {
             _multiTouchInProgress = false;
+          }
+
+          if (activeTool == EditorTool.select &&
+              selectionMode == SelectionMode.lasso &&
+              _lassoStartScene != null &&
+              _activePointer == event.pointer) {
+            final end = _toCanvas(event.localPosition);
+            final rect = Rect.fromPoints(_lassoStartScene!, end);
+            final ids = _shapeIdsInRect(
+              rect,
+              ref.read(editorViewModelProvider).shapes,
+            );
+            vm.setSelection(ids);
+            _lassoStartScene = null;
+            _lassoStartScreen = null;
+            _lassoRectScene = null;
+            _lassoRectScreen = null;
+            _activePointer = null;
+            setState(() {});
+            return;
           }
 
           if (_activeHandle != null && _handleCenter != null) {
@@ -488,6 +592,15 @@ class _CanvasAreaState extends ConsumerState<CanvasArea> {
             _multiTouchInProgress = false;
           }
 
+          if (selectionMode == SelectionMode.lasso) {
+            _lassoStartScene = null;
+            _lassoStartScreen = null;
+            _lassoRectScene = null;
+            _lassoRectScreen = null;
+            if (isLast) _activePointer = null;
+            setState(() {});
+          }
+
           if (_activeHandle != null && _handleCenter != null) {
             _activeHandle = null;
             _handleCenter = null;
@@ -537,7 +650,18 @@ class _CanvasAreaState extends ConsumerState<CanvasArea> {
               onPointerMove: handlePointerMove,
               onPointerUp: handlePointerUp,
               onPointerCancel: handlePointerCancel,
-              child: viewer,
+              child: Stack(
+                children: [
+                  viewer,
+                  if (_lassoRectScreen != null)
+                    IgnorePointer(
+                      child: CustomPaint(
+                        painter: _LassoPainter(rect: _lassoRectScreen!),
+                        child: const SizedBox.expand(),
+                      ),
+                    ),
+                ],
+              ),
             ),
           ),
         );
@@ -643,13 +767,13 @@ class _CanvasAreaState extends ConsumerState<CanvasArea> {
 
     final candidates = <Offset>[
       Offset.zero, // center
-      Offset(halfW, 0),   // right
-      Offset(-halfW, 0),  // left
-      Offset(0, halfH),   // bottom
-      Offset(0, -halfH),  // top
-      Offset(halfW, halfH),   // bottom-right
-      Offset(-halfW, halfH),  // bottom-left
-      Offset(halfW, -halfH),  // top-right
+      Offset(halfW, 0), // right
+      Offset(-halfW, 0), // left
+      Offset(0, halfH), // bottom
+      Offset(0, -halfH), // top
+      Offset(halfW, halfH), // bottom-right
+      Offset(-halfW, halfH), // bottom-left
+      Offset(halfW, -halfH), // top-right
       Offset(-halfW, -halfH), // top-left
     ];
 
@@ -672,5 +796,148 @@ class _CanvasAreaState extends ConsumerState<CanvasArea> {
     }
 
     return bestWorld;
+  }
+
+  List<String> _shapeIdsInRect(Rect rect, List<Shape> shapes) {
+    final selectionRect = Rect.fromPoints(
+      Offset(math.min(rect.left, rect.right), math.min(rect.top, rect.bottom)),
+      Offset(math.max(rect.left, rect.right), math.max(rect.top, rect.bottom)),
+    );
+    final hits = <String>[];
+    for (final shape in shapes) {
+      final bounds = _shapeSelectionBounds(shape);
+      if (bounds == null) continue;
+      final expanded = bounds.inflate(0.5);
+      if (selectionRect.overlaps(expanded) ||
+          selectionRect.contains(expanded.topLeft) ||
+          selectionRect.contains(expanded.bottomRight) ||
+          expanded.contains(selectionRect.center)) {
+        hits.add(shape.id);
+      }
+    }
+    return hits;
+  }
+
+  Rect? _shapeSelectionBounds(Shape shape) {
+    final baseRect = shape.bounds;
+    final points = <Offset>[];
+    if (baseRect != null) {
+      points.addAll(
+        transformedCorners(baseRect, shape.matrixForRect(baseRect)),
+      );
+    } else if (shape.points.isNotEmpty) {
+      final bounds = _boundsFromPoints(shape.points);
+      final matrix = shape.matrixForRect(bounds ?? Rect.zero);
+      for (final p in shape.points) {
+        final v = matrix.transform3(Vector3(p.dx, p.dy, 0));
+        points.add(Offset(v.x, v.y));
+      }
+    } else {
+      return null;
+    }
+
+    double minX = points.first.dx;
+    double maxX = points.first.dx;
+    double minY = points.first.dy;
+    double maxY = points.first.dy;
+    for (final p in points) {
+      if (p.dx < minX) minX = p.dx;
+      if (p.dx > maxX) maxX = p.dx;
+      if (p.dy < minY) minY = p.dy;
+      if (p.dy > maxY) maxY = p.dy;
+    }
+    return Rect.fromLTRB(minX, minY, maxX, maxY);
+  }
+}
+
+class _LassoPainter extends CustomPainter {
+  const _LassoPainter({required this.rect});
+
+  final Rect rect;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (rect.width == 0 && rect.height == 0) return;
+    final normalized = Rect.fromPoints(
+      Offset(math.min(rect.left, rect.right), math.min(rect.top, rect.bottom)),
+      Offset(math.max(rect.left, rect.right), math.max(rect.top, rect.bottom)),
+    );
+    final fill = Paint()
+      ..color = const Color(0x221E88E5)
+      ..style = PaintingStyle.fill;
+    final stroke = Paint()
+      ..color = const Color(0xFF1E88E5)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.0;
+    canvas.drawRect(normalized, fill);
+    _drawDashedRect(canvas, normalized, stroke);
+  }
+
+  void _drawDashedRect(Canvas canvas, Rect rect, Paint paint) {
+    const dashWidth = 6.0;
+    const dashSpace = 4.0;
+    // Top
+    _drawDashedLine(
+      canvas,
+      Offset(rect.left, rect.top),
+      Offset(rect.right, rect.top),
+      paint,
+      dashWidth,
+      dashSpace,
+    );
+    // Right
+    _drawDashedLine(
+      canvas,
+      Offset(rect.right, rect.top),
+      Offset(rect.right, rect.bottom),
+      paint,
+      dashWidth,
+      dashSpace,
+    );
+    // Bottom
+    _drawDashedLine(
+      canvas,
+      Offset(rect.right, rect.bottom),
+      Offset(rect.left, rect.bottom),
+      paint,
+      dashWidth,
+      dashSpace,
+    );
+    // Left
+    _drawDashedLine(
+      canvas,
+      Offset(rect.left, rect.bottom),
+      Offset(rect.left, rect.top),
+      paint,
+      dashWidth,
+      dashSpace,
+    );
+  }
+
+  void _drawDashedLine(
+    Canvas canvas,
+    Offset start,
+    Offset end,
+    Paint paint,
+    double dashWidth,
+    double dashSpace,
+  ) {
+    final totalLength = (end - start).distance;
+    if (totalLength == 0) return;
+    final direction = (end - start) / totalLength;
+    double distance = 0.0;
+    while (distance < totalLength) {
+      final currentStart = start + direction * distance;
+      distance += dashWidth;
+      final currentEnd =
+          start + direction * (distance > totalLength ? totalLength : distance);
+      canvas.drawLine(currentStart, currentEnd, paint);
+      distance += dashSpace;
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _LassoPainter oldDelegate) {
+    return oldDelegate.rect != rect;
   }
 }
