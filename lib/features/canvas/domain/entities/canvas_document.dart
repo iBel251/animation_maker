@@ -1,6 +1,8 @@
 import 'dart:ui';
 
+import 'package:animation_maker/core/constants/animation_constants.dart';
 import 'package:animation_maker/features/canvas/domain/entities/audio_track.dart';
+import 'package:animation_maker/features/canvas/domain/entities/canvas_background.dart';
 import 'package:animation_maker/features/canvas/domain/entities/canvas_frame.dart';
 import 'package:animation_maker/features/canvas/domain/entities/canvas_layer.dart';
 import 'package:animation_maker/features/canvas/domain/entities/raster_stroke.dart';
@@ -11,6 +13,7 @@ class CanvasDocument {
     required this.id,
     required this.title,
     required this.size,
+    required this.background,
     required this.fps,
     required this.frameCount,
     required List<CanvasLayer> layers,
@@ -26,6 +29,7 @@ class CanvasDocument {
   final String id;
   final String title;
   final Size size;
+  final CanvasBackground background;
   final double fps;
   final int frameCount;
   final List<CanvasLayer> layers;
@@ -82,6 +86,7 @@ class CanvasDocument {
     String? id,
     String? title,
     Size? size,
+    CanvasBackground? background,
     double? fps,
     int? frameCount,
     List<CanvasLayer>? layers,
@@ -94,6 +99,7 @@ class CanvasDocument {
       id: id ?? this.id,
       title: title ?? this.title,
       size: size ?? this.size,
+      background: background ?? this.background,
       fps: fps ?? this.fps,
       frameCount: frameCount ?? this.frameCount,
       layers: layers ?? this.layers,
@@ -108,6 +114,7 @@ class CanvasDocument {
     required String id,
     required String title,
     required Size size,
+    CanvasBackground? background,
     required double fps,
     int frameCount = 1,
     List<Shape> shapes = const <Shape>[],
@@ -132,6 +139,8 @@ class CanvasDocument {
       id: id,
       title: title,
       size: size,
+      background: background ??
+          const CanvasBackground.solid(kDefaultCanvasBackgroundColor),
       fps: fps,
       frameCount: frameCount,
       layers: [layer],

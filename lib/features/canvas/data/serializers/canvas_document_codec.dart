@@ -4,6 +4,7 @@ import 'dart:ui';
 import 'package:animation_maker/core/constants/animation_constants.dart';
 import 'package:animation_maker/features/canvas/domain/entities/audio_track.dart';
 import 'package:animation_maker/features/canvas/domain/entities/brush_type.dart';
+import 'package:animation_maker/features/canvas/domain/entities/canvas_background.dart';
 import 'package:animation_maker/features/canvas/domain/entities/canvas_document.dart';
 import 'package:animation_maker/features/canvas/domain/entities/canvas_frame.dart';
 import 'package:animation_maker/features/canvas/domain/entities/canvas_layer.dart';
@@ -30,6 +31,7 @@ class CanvasDocumentCodec {
       'id': document.id,
       'title': document.title,
       'size': _sizeToJson(document.size),
+      'background': _backgroundToJson(document.background),
       'fps': document.fps,
       'frameCount': document.frameCount,
       'createdAt': document.createdAt.toIso8601String(),
@@ -45,6 +47,7 @@ class CanvasDocumentCodec {
 
   static CanvasDocument fromJson(Map<String, dynamic> json) {
     final size = _sizeFromJson(json['size']);
+    final background = _backgroundFromJson(json['background']);
     final fps = _num(json['fps'], kDefaultFps);
     var frameCount = _int(json['frameCount'], kDefaultFrameCount);
     final layersRaw = json['layers'];
@@ -87,6 +90,7 @@ class CanvasDocumentCodec {
       id: (json['id'] as String?) ?? 'document-1',
       title: (json['title'] as String?) ?? 'Untitled',
       size: size,
+      background: background,
       fps: fps,
       frameCount: frameCount,
       layers: layers,
@@ -380,6 +384,50 @@ class CanvasDocumentCodec {
       );
     }
     return kDefaultCanvasSize;
+  }
+
+  static Map<String, dynamic> _backgroundToJson(CanvasBackground background) {
+    return {
+      'kind': background.kind.name,
+      'color': background.color?.value,
+      'imagePath': background.imagePath,
+    };
+  }
+
+  static CanvasBackground _backgroundFromJson(dynamic value) {
+    if (value is Map<String, dynamic>) {
+      final kindValue = value['kind'];
+      CanvasBackgroundKind kind = CanvasBackgroundKind.solid;
+      if (kindValue is String) {
+        for (final entry in CanvasBackgroundKind.values) {
+          if (entry.name == kindValue) {
+            kind = entry;
+            break;
+          }
+        }
+      }
+      final color = _colorNullable(value['color']);
+      final imagePath = value['imagePath'] as String?;
+      switch (kind) {
+        case CanvasBackgroundKind.transparent:
+          return const CanvasBackground.transparent();
+        case CanvasBackgroundKind.image:
+          if (imagePath != null && imagePath.isNotEmpty) {
+            return CanvasBackground.image(
+              imagePath,
+              fallbackColor: color ?? kDefaultCanvasBackgroundColor,
+            );
+          }
+          return CanvasBackground.solid(
+            color ?? kDefaultCanvasBackgroundColor,
+          );
+        case CanvasBackgroundKind.solid:
+          return CanvasBackground.solid(
+            color ?? kDefaultCanvasBackgroundColor,
+          );
+      }
+    }
+    return const CanvasBackground.solid(kDefaultCanvasBackgroundColor);
   }
 
   static Transform2D _transformFromJson(dynamic value) {

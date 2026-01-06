@@ -145,6 +145,9 @@ class _CanvasWidgetState extends ConsumerState<CanvasWidget> {
     final canvasSize = ref.watch(
       editorViewModelProvider.select((s) => s.document.size),
     );
+    final canvasBackground = ref.watch(
+      editorViewModelProvider.select((s) => s.document.background),
+    );
     final vm = ref.read(editorViewModelProvider.notifier);
     final selectedShape = _findShape(shapes, selectedShapeId);
 
@@ -213,7 +216,9 @@ class _CanvasWidgetState extends ConsumerState<CanvasWidget> {
           height: canvasSize.height,
           child: Container(
             decoration: BoxDecoration(
-              color: AppColors.grey100,
+              color: canvasBackground.isTransparent
+                  ? Colors.transparent
+                  : canvasBackground.resolvedColor(),
               border: Border.all(color: AppColors.grey400),
               boxShadow: const [
                 BoxShadow(

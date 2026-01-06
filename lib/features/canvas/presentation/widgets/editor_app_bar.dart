@@ -8,6 +8,8 @@ import 'package:animation_maker/core/constants/app_colors.dart';
 import '../painting/brushes/brush_type.dart';
 import '../providers/canvas_notifier.dart';
 import 'brush_type_picker.dart';
+import 'editor_menu_sheet.dart';
+import 'selection_mode_picker.dart';
 import 'shape_type_picker.dart';
 
 class EditorAppBar extends ConsumerWidget implements PreferredSizeWidget {
@@ -226,7 +228,7 @@ class EditorAppBar extends ConsumerWidget implements PreferredSizeWidget {
         icon: Icons.ads_click,
         tooltip: 'Select (${_selectionModeLabel(selectionMode)})',
         onActivePress: () async {
-          final picked = await _showSelectionModePicker(
+          final picked = await showSelectionModePicker(
             context: context,
             current: selectionMode,
           );
@@ -236,22 +238,9 @@ class EditorAppBar extends ConsumerWidget implements PreferredSizeWidget {
         },
       ),
       IconButton(
-        onPressed: () async {
-          try {
-            await viewModel.saveDocument();
-            if (!context.mounted) return;
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Document saved')),
-            );
-          } catch (error) {
-            if (!context.mounted) return;
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Save unavailable on this platform')),
-            );
-          }
-        },
-        icon: const Icon(Icons.save),
-        tooltip: 'Save',
+        onPressed: () => showEditorMenu(context: context),
+        icon: const Icon(Icons.menu),
+        tooltip: 'Menu',
       ),
     ];
 
@@ -284,65 +273,6 @@ String _selectionModeLabel(SelectionMode mode) {
     case SelectionMode.all:
       return 'All';
   }
-}
-
-Future<SelectionMode?> _showSelectionModePicker({
-  required BuildContext context,
-  required SelectionMode current,
-}) {
-  return showDialog<SelectionMode>(
-    context: context,
-    builder: (context) {
-      return SimpleDialog(
-        title: const Text('Selection mode'),
-        children: [
-          _selectionOption(
-            context,
-            SelectionMode.single,
-            current,
-            'Single select',
-          ),
-          _selectionOption(
-            context,
-            SelectionMode.lasso,
-            current,
-            'Lasso select',
-          ),
-          _selectionOption(
-            context,
-            SelectionMode.multi,
-            current,
-            'Multi select',
-          ),
-          _selectionOption(context, SelectionMode.all, current, 'Select all'),
-        ],
-      );
-    },
-  );
-}
-
-Widget _selectionOption(
-  BuildContext context,
-  SelectionMode mode,
-  SelectionMode current,
-  String label,
-) {
-  final theme = Theme.of(context);
-  final isCurrent = mode == current;
-  return SimpleDialogOption(
-    onPressed: () => Navigator.of(context).pop(mode),
-    child: Row(
-      children: [
-        Icon(
-          isCurrent ? Icons.radio_button_checked : Icons.radio_button_unchecked,
-          color: isCurrent ? theme.colorScheme.primary : theme.iconTheme.color,
-          size: 20,
-        ),
-        const SizedBox(width: 8),
-        Text(label),
-      ],
-    ),
-  );
 }
 
 Color? _parseHexColor(String input) {

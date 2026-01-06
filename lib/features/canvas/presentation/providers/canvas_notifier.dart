@@ -3,6 +3,7 @@ import 'dart:ui';
 import 'dart:math' as math;
 
 import 'package:animation_maker/core/constants/animation_constants.dart';
+import 'package:animation_maker/features/canvas/domain/entities/canvas_background.dart';
 import 'package:animation_maker/features/canvas/domain/entities/canvas_document.dart';
 import 'package:animation_maker/features/canvas/domain/entities/canvas_frame.dart';
 import 'package:animation_maker/features/canvas/domain/entities/canvas_layer.dart';
@@ -24,6 +25,7 @@ import 'package:animation_maker/features/canvas/presentation/services/shape_draw
 import 'package:animation_maker/features/canvas/presentation/services/stroke_drawing_service.dart';
 import 'package:animation_maker/features/canvas/presentation/services/tool_state_toggles.dart';
 import 'package:animation_maker/features/canvas/presentation/services/transform_service.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:perfect_freehand/perfect_freehand.dart';
@@ -217,6 +219,11 @@ class EditorViewModel extends Notifier<EditorState> {
   int _groupCounter = 0;
   int _layerCounter = 0;
   final EditorClipboard _clipboard = EditorClipboard();
+  static const Duration _autosaveDelay = Duration(seconds: 2);
+  Timer? _autosaveTimer;
+  bool _autosaveDirty = false;
+  bool _saveInFlight = false;
+  bool _saveQueued = false;
   @override
   EditorState build() {
     final initial = EditorState.initial();
@@ -230,6 +237,9 @@ class EditorViewModel extends Notifier<EditorState> {
     );
     _document.rebuildQuadTree(initial.shapes);
     _syncIdCounters(initial.document);
+    ref.onDispose(() {
+      _autosaveTimer?.cancel();
+    });
     return initial;
   }
 
@@ -343,6 +353,7 @@ class EditorViewModel extends Notifier<EditorState> {
     if (makeActive) {
       await _loadFrame(layerId: id, frameIndex: frameIndex);
     }
+    _queueAutosave();
   }
 
   void toggleLayerVisibility(String layerId) {
@@ -353,6 +364,7 @@ class EditorViewModel extends Notifier<EditorState> {
         .upsertLayer(updated)
         .copyWith(updatedAt: DateTime.now());
     state = state.copyWith(document: nextDocument);
+    _queueAutosave();
   }
 
   void updateDocumentMetadata({
@@ -360,10 +372,12 @@ class EditorViewModel extends Notifier<EditorState> {
     Size? size,
     double? fps,
     int? frameCount,
+    CanvasBackground? background,
   }) {
     final next = state.document.copyWith(
       title: title,
       size: size,
+      background: background,
       fps: fps,
       frameCount: frameCount,
       updatedAt: DateTime.now(),
@@ -372,6 +386,7 @@ class EditorViewModel extends Notifier<EditorState> {
     if (size != null) {
       updateCanvasSize(size);
     }
+    _queueAutosave();
   }
 
   void updateCanvasSize(Size size) {
@@ -393,9 +408,57 @@ class EditorViewModel extends Notifier<EditorState> {
     state = _toolToggles.toggleToolPanel(state);
   }
 
-  Future<void> saveDocument() async {
+  Future<void> saveDocument({bool flush = true}) async {
+    if (flush) {
+      _autosaveTimer?.cancel();
+      _autosaveTimer = null;
+    }
+    _autosaveDirty = true;
+    await _persistDocument();
+  }
+
+  void _queueAutosave() {
+    _autosaveDirty = true;
+    _autosaveTimer?.cancel();
+    _autosaveTimer = Timer(_autosaveDelay, _runAutosave);
+  }
+
+  Future<void> _runAutosave() async {
+    if (!_autosaveDirty) return;
+    _autosaveTimer?.cancel();
+    _autosaveTimer = null;
+    await _persistDocument(rescheduleOnFailure: true);
+  }
+
+  Future<void> _persistDocument({bool rescheduleOnFailure = false}) async {
+    if (_saveInFlight) {
+      _saveQueued = true;
+      return;
+    }
+    _saveInFlight = true;
     final repo = ref.read(canvasRepositoryProvider);
-    await repo.saveDocument(state.document);
+    final snapshot = state.document;
+    final savedStamp = snapshot.updatedAt;
+    try {
+      await repo.saveDocument(snapshot);
+      if (state.document.updatedAt == savedStamp) {
+        _autosaveDirty = false;
+      }
+    } catch (error) {
+      debugPrint('Failed to save document: $error');
+      if (rescheduleOnFailure) {
+        _autosaveDirty = true;
+        _queueAutosave();
+      }
+    } finally {
+      _saveInFlight = false;
+      if (_saveQueued) {
+        _saveQueued = false;
+        if (_autosaveDirty) {
+          _queueAutosave();
+        }
+      }
+    }
   }
 
   Future<void> loadDocument(String id) async {
@@ -1074,7 +1137,8 @@ class EditorViewModel extends Notifier<EditorState> {
     _rasterController.replaceStrokes(frame.rasterStrokes);
     final newRaster = await _rasterController.renderAll();
     final immutableShapes = List<Shape>.unmodifiable(frame.shapes);
-    final nextDocument = frameIndex >= state.document.frameCount
+    final didExtend = frameIndex >= state.document.frameCount;
+    final nextDocument = didExtend
         ? state.document.copyWith(
             frameCount: frameIndex + 1,
             updatedAt: DateTime.now(),
@@ -1091,6 +1155,9 @@ class EditorViewModel extends Notifier<EditorState> {
       inProgressStroke: const [],
     );
     _document.rebuildQuadTree(immutableShapes);
+    if (didExtend) {
+      _queueAutosave();
+    }
   }
 
   Future<void> _applyDocument(
@@ -1125,6 +1192,9 @@ class EditorViewModel extends Notifier<EditorState> {
     );
     _document.rebuildQuadTree(immutableShapes);
     _syncIdCounters(document);
+    _autosaveTimer?.cancel();
+    _autosaveTimer = null;
+    _autosaveDirty = false;
   }
 
   void _syncIdCounters(CanvasDocument document) {
@@ -1204,6 +1274,7 @@ class EditorViewModel extends Notifier<EditorState> {
     );
     _document.rebuildQuadTree(immutableShapes);
     _applyingHistory = false;
+    _queueAutosave();
   }
 
   void _pushHistory() {
@@ -1216,6 +1287,7 @@ class EditorViewModel extends Notifier<EditorState> {
       frameIndex: state.currentFrame,
       activeLayerId: state.activeLayerId,
     );
+    _queueAutosave();
   }
 
   void _pushHistoryDeferred() {
@@ -1232,6 +1304,7 @@ class EditorViewModel extends Notifier<EditorState> {
         frameIndex: state.currentFrame,
         activeLayerId: state.activeLayerId,
       );
+      _queueAutosave();
     });
   }
 

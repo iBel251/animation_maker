@@ -2,6 +2,8 @@ import 'package:animation_maker/features/canvas/domain/entities/canvas_document.
 import 'package:animation_maker/features/canvas/domain/entities/canvas_document_summary.dart';
 
 class CanvasLocalDataSource {
+  CanvasLocalDataSource({Object? database});
+
   Future<void> saveDocument(CanvasDocument document) async {
     throw UnsupportedError('Local storage is not available on this platform.');
   }
