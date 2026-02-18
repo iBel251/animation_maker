@@ -1,5 +1,9 @@
+import 'dart:io';
+
 import 'package:drift/drift.dart';
-import 'package:drift_flutter/drift_flutter.dart';
+import 'package:drift/native.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:path/path.dart' as p;
 
 import 'daos/app_metadata_dao.dart';
 import 'daos/canvas_project_dao.dart';
@@ -39,6 +43,10 @@ class CanvasDatabase extends _$CanvasDatabase {
       );
 }
 
-QueryExecutor _openConnection() {
-  return driftDatabase(name: 'animation_maker');
+LazyDatabase _openConnection() {
+  return LazyDatabase(() async {
+    final dbFolder = await getApplicationDocumentsDirectory();
+    final file = File(p.join(dbFolder.path, 'animation_maker.db'));
+    return NativeDatabase.createInBackground(file);
+  });
 }

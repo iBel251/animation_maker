@@ -51,8 +51,8 @@ class StrokeSmoother {
   static _FilterConfig _filterConfigFromSmoothness(double s) {
     final t = s.clamp(0, 1);
     final inv = 1 - t;
-    final minCutoff = _lerp(1.6, 0.15, inv.toDouble());
-    final beta = _lerp(0.0, 0.04, inv.toDouble());
+    final minCutoff = _lerp(1.0, 0.001, inv.toDouble());
+    final beta = _lerp(0.05, 0.001, inv.toDouble());
     return _FilterConfig(minCutoff: minCutoff, beta: beta);
   }
 

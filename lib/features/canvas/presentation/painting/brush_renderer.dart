@@ -1,4 +1,4 @@
-import 'dart:ui';
+import 'dart:ui' as ui;
 
 import 'package:perfect_freehand/perfect_freehand.dart';
 
@@ -25,23 +25,22 @@ abstract class BrushRenderer {
   const BrushRenderer();
 
   /// Build a path for a stroke from PointVector input (pressure-aware).
-  Path? buildPath(List<PointVector> points, BrushStrokeOptions options);
+  ui.Path? buildPath(List<PointVector> points, BrushStrokeOptions options);
 
   /// Convenience helper for Offset-only input.
-  Path? buildPathFromOffsets(
-    List<Offset> points,
+  ui.Path? buildPathFromOffsets(
+    List<ui.Offset> points,
     BrushStrokeOptions options,
   );
 
-  /// Allow brushes to tweak paint (e.g., add blur/alpha tweaks).
-  Paint decoratePaint(Paint paint) => paint;
+  ui.Paint decoratePaint(ui.Paint paint) => paint;
 }
 
 class PerfectFreehandRenderer extends BrushRenderer {
   const PerfectFreehandRenderer();
 
   @override
-  Path? buildPath(List<PointVector> points, BrushStrokeOptions options) {
+  ui.Path? buildPath(List<PointVector> points, BrushStrokeOptions options) {
     if (points.isEmpty || options.size <= 0) return null;
     final outline = getStroke(
       points,
@@ -58,8 +57,8 @@ class PerfectFreehandRenderer extends BrushRenderer {
   }
 
   @override
-  Path? buildPathFromOffsets(
-    List<Offset> points,
+  ui.Path? buildPathFromOffsets(
+    List<ui.Offset> points,
     BrushStrokeOptions options,
   ) {
     final vectors = points
@@ -68,19 +67,51 @@ class PerfectFreehandRenderer extends BrushRenderer {
     return buildPath(vectors, options);
   }
 
-  Path? _outlineToPath(List<Offset> outline) {
-    if (outline.isEmpty) return null;
-    final path = Path()..moveTo(outline.first.dx, outline.first.dy);
-    for (var i = 1; i < outline.length; i++) {
-      final pt = outline[i];
-      path.lineTo(pt.dx, pt.dy);
-    }
-    path.close();
-    return path;
+  ui.Path? _outlineToPath(List<ui.Offset> outline) {
+    return _smoothOutlineToPath(outline);
   }
 
   @override
-  Paint decoratePaint(Paint paint) => paint;
+  ui.Paint decoratePaint(ui.Paint paint) => paint;
+}
+
+/// Converts outline points to a smooth path using quadratic Bezier curves.
+/// This is the official recommended rendering approach from perfect_freehand.
+/// See: https://pub.dev/packages/perfect_freehand/example
+ui.Path? _smoothOutlineToPath(List<ui.Offset> outline) {
+  if (outline.isEmpty) return null;
+  if (outline.length == 1) {
+    final p = outline.first;
+    return ui.Path()..addOval(ui.Rect.fromCircle(center: p, radius: 1));
+  }
+  if (outline.length == 2) {
+    return ui.Path()
+      ..moveTo(outline.first.dx, outline.first.dy)
+      ..lineTo(outline.last.dx, outline.last.dy)
+      ..close();
+  }
+
+  final path = ui.Path();
+  path.moveTo(outline[0].dx, outline[0].dy);
+
+  for (int i = 1; i < outline.length - 1; i++) {
+    final p0 = outline[i];
+    final p1 = outline[i + 1];
+    // Control point is current point, end point is midpoint to next
+    path.quadraticBezierTo(
+      p0.dx,
+      p0.dy,
+      (p0.dx + p1.dx) / 2,
+      (p0.dy + p1.dy) / 2,
+    );
+  }
+
+  // Final point
+  final last = outline.last;
+  path.lineTo(last.dx, last.dy);
+  path.close();
+
+  return path;
 }
 
 /// A simple “pencil” renderer that introduces slight jitter and lighter strokes.
@@ -91,7 +122,7 @@ class PencilBrushRenderer extends BrushRenderer {
   final double jitter;
 
   @override
-  Path? buildPath(List<PointVector> points, BrushStrokeOptions options) {
+  ui.Path? buildPath(List<PointVector> points, BrushStrokeOptions options) {
     if (points.isEmpty || options.size <= 0) return null;
     final jittered = <PointVector>[];
     for (final p in points) {
@@ -113,11 +144,11 @@ class PencilBrushRenderer extends BrushRenderer {
         isComplete: options.isComplete,
       ),
     );
-    return _outlineToPath(outline);
+    return _smoothOutlineToPath(outline);
   }
 
   @override
-  Path? buildPathFromOffsets(List<Offset> points, BrushStrokeOptions options) {
+  ui.Path? buildPathFromOffsets(List<ui.Offset> points, BrushStrokeOptions options) {
     final vectors = points
         .map((p) => PointVector.fromOffset(offset: p, pressure: 1.0))
         .toList(growable: false);
@@ -135,21 +166,10 @@ class PencilBrushRenderer extends BrushRenderer {
     return (v - 0.5) * pressure;
   }
 
-  Path? _outlineToPath(List<Offset> outline) {
-    if (outline.isEmpty) return null;
-    final path = Path()..moveTo(outline.first.dx, outline.first.dy);
-    for (var i = 1; i < outline.length; i++) {
-      final pt = outline[i];
-      path.lineTo(pt.dx, pt.dy);
-    }
-    path.close();
-    return path;
-  }
-
   @override
-  Paint decoratePaint(Paint paint) {
+  ui.Paint decoratePaint(ui.Paint paint) {
     return paint
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 0.8)
+      ..maskFilter = const ui.MaskFilter.blur(ui.BlurStyle.normal, 0.8)
       ..color = paint.color.withOpacity((paint.color.opacity * 0.85).clamp(0, 1));
   }
 }
@@ -159,7 +179,7 @@ class MarkerBrushRenderer extends BrushRenderer {
   const MarkerBrushRenderer();
 
   @override
-  Path? buildPath(List<PointVector> points, BrushStrokeOptions options) {
+  ui.Path? buildPath(List<PointVector> points, BrushStrokeOptions options) {
     if (points.isEmpty || options.size <= 0) return null;
     final outline = getStroke(
       points,
@@ -172,12 +192,12 @@ class MarkerBrushRenderer extends BrushRenderer {
         isComplete: options.isComplete,
       ),
     );
-    return _outlineToPath(outline);
+    return _smoothOutlineToPath(outline);
   }
 
   @override
-  Path? buildPathFromOffsets(
-    List<Offset> points,
+  ui.Path? buildPathFromOffsets(
+    List<ui.Offset> points,
     BrushStrokeOptions options,
   ) {
     final vectors = points
@@ -186,21 +206,10 @@ class MarkerBrushRenderer extends BrushRenderer {
     return buildPath(vectors, options);
   }
 
-  Path? _outlineToPath(List<Offset> outline) {
-    if (outline.isEmpty) return null;
-    final path = Path()..moveTo(outline.first.dx, outline.first.dy);
-    for (var i = 1; i < outline.length; i++) {
-      final pt = outline[i];
-      path.lineTo(pt.dx, pt.dy);
-    }
-    path.close();
-    return path;
-  }
-
   @override
-  Paint decoratePaint(Paint paint) {
+  ui.Paint decoratePaint(ui.Paint paint) {
     return paint
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 0.6)
+      ..maskFilter = const ui.MaskFilter.blur(ui.BlurStyle.normal, 0.6)
       ..isAntiAlias = true;
   }
 }

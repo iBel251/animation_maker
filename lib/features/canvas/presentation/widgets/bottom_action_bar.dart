@@ -13,6 +13,7 @@ class BottomActionBar extends ConsumerWidget {
     final vm = ref.read(editorViewModelProvider.notifier);
     final canUndo = vm.canUndo;
     final canRedo = vm.canRedo;
+    final historyBusy = vm.isHistoryBusy;
     final selectedId =
         ref.watch(editorViewModelProvider.select((s) => s.selectedShapeId));
     final canCopy = selectedId != null;
@@ -35,13 +36,13 @@ class BottomActionBar extends ConsumerWidget {
               _ActionIcon(
                 icon: Icons.undo,
                 label: 'Undo',
-                onPressed: canUndo ? vm.undo : null,
+                onPressed: canUndo && !historyBusy ? vm.undo : null,
               ),
               const SizedBox(width: 8),
               _ActionIcon(
                 icon: Icons.redo,
                 label: 'Redo',
-                onPressed: canRedo ? vm.redo : null,
+                onPressed: canRedo && !historyBusy ? vm.redo : null,
               ),
               const SizedBox(width: 8),
               _ActionIcon(

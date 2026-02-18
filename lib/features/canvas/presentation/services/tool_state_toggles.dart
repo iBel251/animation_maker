@@ -1,11 +1,13 @@
 import '../providers/canvas_notifier.dart';
 
 class ToolStateToggles {
-  EditorState toggleProperties(EditorState state) {
-    final newOpen = !state.isPropertiesOpen;
+  EditorState toggleLeftPanel(EditorState state, LeftPanelTab tab) {
+    final isOpen = state.isLeftPanelOpen;
+    final shouldOpen = !isOpen || state.leftPanelTab != tab;
     return state.copyWith(
-      isPropertiesOpen: newOpen,
-      isToolPanelOpen: newOpen ? false : state.isToolPanelOpen,
+      isLeftPanelOpen: shouldOpen ? true : false,
+      leftPanelTab: tab,
+      isToolPanelOpen: shouldOpen ? false : state.isToolPanelOpen,
     );
   }
 
@@ -13,7 +15,7 @@ class ToolStateToggles {
     final newOpen = !state.isToolPanelOpen;
     return state.copyWith(
       isToolPanelOpen: newOpen,
-      isPropertiesOpen: newOpen ? false : state.isPropertiesOpen,
+      isLeftPanelOpen: newOpen ? false : state.isLeftPanelOpen,
     );
   }
 

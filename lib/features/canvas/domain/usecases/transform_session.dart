@@ -11,8 +11,7 @@ class TransformSession {
     : _base = {for (final s in shapes) s.id: s},
       _origins = {
         for (final s in shapes)
-          s.id:
-              (s.bounds ?? _boundsFromPoints(s.points))?.center ?? Offset.zero,
+          s.id: s.localBounds?.center ?? Offset.zero,
       };
 
   final Map<String, Shape> _base;
@@ -148,18 +147,6 @@ class TransformSession {
     return updated;
   }
 
-  static Rect? _boundsFromPoints(List<Offset> pts) {
-    if (pts.isEmpty) return null;
-    double minX = pts.first.dx, maxX = pts.first.dx;
-    double minY = pts.first.dy, maxY = pts.first.dy;
-    for (final p in pts) {
-      if (p.dx < minX) minX = p.dx;
-      if (p.dx > maxX) maxX = p.dx;
-      if (p.dy < minY) minY = p.dy;
-      if (p.dy > maxY) maxY = p.dy;
-    }
-    return Rect.fromLTRB(minX, minY, maxX, maxY);
-  }
 }
 
 

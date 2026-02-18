@@ -29,19 +29,7 @@ class ShapeTransformer {
   }
 
   static Rect? _baseBounds(Shape shape) {
-    if (shape.bounds != null) return shape.bounds;
-    if (shape.points.isEmpty) return null;
-    double minX = shape.points.first.dx;
-    double maxX = shape.points.first.dx;
-    double minY = shape.points.first.dy;
-    double maxY = shape.points.first.dy;
-    for (final p in shape.points) {
-      if (p.dx < minX) minX = p.dx;
-      if (p.dx > maxX) maxX = p.dx;
-      if (p.dy < minY) minY = p.dy;
-      if (p.dy > maxY) maxY = p.dy;
-    }
-    return Rect.fromLTRB(minX, minY, maxX, maxY);
+    return shape.localBounds;
   }
 
   static Rect _transformedAabb(Rect rect, double rotation, double scale) {

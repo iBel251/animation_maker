@@ -55,6 +55,27 @@ class ShapeDrawingService {
           strokeWidth: strokeWidth,
           opacity: opacity,
         );
+      case ShapeKind.pointPath:
+        // Point path is created via point mode, not drag-based drawing
+        return Shape(
+          id: id,
+          kind: ShapeKind.pointPath,
+          points: [start],
+          strokeColor: strokeColor,
+          strokeWidth: strokeWidth,
+          opacity: opacity,
+          fillColor: fillColor,
+        );
+      case ShapeKind.image:
+        // Images are added programmatically, not via drag drawing
+        return Shape(
+          id: id,
+          kind: ShapeKind.image,
+          bounds: Rect.fromLTWH(start.dx, start.dy, 0, 0),
+          strokeColor: strokeColor,
+          strokeWidth: 0,
+          opacity: opacity,
+        );
     }
   }
 
@@ -81,6 +102,9 @@ class ShapeDrawingService {
         final triPoints = trianglePoints(startPoint, currentPoint);
         return target.copyWith(points: triPoints);
       case ShapeKind.freehand:
+      case ShapeKind.pointPath:
+      case ShapeKind.image:
+        // Point path is updated via point mode, not drag; images are not drawn
         return target;
     }
   }

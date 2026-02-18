@@ -11,12 +11,42 @@ class TransformService {
 
   Shape translate(Shape shape, Offset delta) {
     final shiftedBounds = shape.bounds?.shift(delta);
+    final shiftedContours = shape.contours.isNotEmpty
+        ? shape.contours
+            .map(
+              (c) => c.map((p) => p + delta).toList(growable: false),
+            )
+            .toList(growable: false)
+        : null;
+    final shiftedEraseContours = shape.eraseContours != null
+        ? shape.eraseContours!
+            .map(
+              (c) => c.map((p) => p + delta).toList(growable: false),
+            )
+            .toList(growable: false)
+        : null;
     final shiftedPoints = shape.points.isNotEmpty
         ? shape.points.map((p) => p + delta).toList()
         : null;
+    final resolvedPressures = _preservePointPressures(
+      shape,
+      shiftedContours != null ? shiftedContours.first : shiftedPoints,
+    );
+    // Shift bezierPoints if present to keep them in sync with points
+    final shiftedBezierPoints = shape.bezierPoints != null
+        ? shape.bezierPoints!
+            .map((bp) => bp.copyWith(position: bp.position + delta))
+            .toList(growable: false)
+        : null;
     return shape.copyWith(
       bounds: shiftedBounds,
-      points: shiftedPoints ?? shape.points.toList(),
+      points: shiftedContours != null
+          ? shiftedContours.first
+          : (shiftedPoints ?? shape.points.toList()),
+      contours: shiftedContours,
+      bezierPoints: shiftedBezierPoints,
+      pointPressures: resolvedPressures,
+      eraseContours: shiftedEraseContours,
       translation: shape.translation,
     );
   }
@@ -54,6 +84,27 @@ class TransformService {
       return base.copyWith(bounds: newRect);
     }
 
+    if (base.contours.isNotEmpty) {
+      final scaledContours = base.contours
+          .map(
+            (c) => c
+                .map(
+                  (p) => Offset(
+                    center.dx + (p.dx - center.dx) * scaleX,
+                    center.dy + (p.dy - center.dy) * scaleY,
+                  ),
+                )
+                .toList(growable: false),
+          )
+          .toList(growable: false);
+      return base.copyWith(
+        points: scaledContours.first,
+        contours: scaledContours,
+        bounds: null,
+        pointPressures: _preservePointPressures(base, scaledContours.first),
+      );
+    }
+
     if (base.points.isNotEmpty) {
       final scaled = base.points
           .map(
@@ -63,7 +114,11 @@ class TransformService {
             ),
           )
           .toList(growable: false);
-      return base.copyWith(points: scaled, bounds: null);
+      return base.copyWith(
+        points: scaled,
+        bounds: null,
+        pointPressures: _preservePointPressures(base, scaled),
+      );
     }
 
     return base;
@@ -95,6 +150,23 @@ class TransformService {
       );
     }
 
+    if (base.contours.isNotEmpty) {
+      final newCenter = rotateOffset(baseCenter);
+      final delta = newCenter - baseCenter;
+      final shiftedContours = base.contours
+          .map(
+            (c) => c.map((p) => p + delta).toList(growable: false),
+          )
+          .toList(growable: false);
+      return base.copyWith(
+        points: shiftedContours.first,
+        contours: shiftedContours,
+        rotation: base.rotation + deltaAngle,
+        scale: base.scale,
+        pointPressures: _preservePointPressures(base, shiftedContours.first),
+      );
+    }
+
     if (base.points.isNotEmpty) {
       final newCenter = rotateOffset(baseCenter);
       final delta = newCenter - baseCenter;
@@ -103,6 +175,7 @@ class TransformService {
         points: shifted,
         rotation: base.rotation + deltaAngle,
         scale: base.scale,
+        pointPressures: _preservePointPressures(base, shifted),
       );
     }
 
@@ -111,7 +184,13 @@ class TransformService {
       scale: base.scale,
     );
   }
-}
 
+  List<double>? _preservePointPressures(Shape shape, List<Offset>? points) {
+    final pressures = shape.pointPressures;
+    if (pressures == null || points == null) return null;
+    if (pressures.length != points.length) return null;
+    return pressures.toList(growable: false);
+  }
+}
 
 

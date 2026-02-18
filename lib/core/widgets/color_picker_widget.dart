@@ -7,7 +7,9 @@ import 'package:flutter_colorpicker/flutter_colorpicker.dart';
 Future<Color?> showAdaptiveColorPicker({
   required BuildContext context,
   required Color initialColor,
+  List<Color> recentColors = const <Color>[],
   VoidCallback? onEyedropperRequested,
+  ValueChanged<Color>? onColorChanged,
 }) async {
   final isCompact = MediaQuery.of(context).size.width < 600;
   final hexCtrl = TextEditingController(
@@ -18,10 +20,11 @@ Future<Color?> showAdaptiveColorPicker({
     ),
   );
   Color temp = initialColor;
+  var canceled = false;
 
   try {
     if (isCompact) {
-      return await showModalBottomSheet<Color>(
+      final result = await showModalBottomSheet<Color>(
         context: context,
         useSafeArea: true,
         isScrollControlled: true,
@@ -34,44 +37,64 @@ Future<Color?> showAdaptiveColorPicker({
             heightFactor: 0.92,
             child: _ColorPickerSheet(
               initialColor: initialColor,
+              recentColors: recentColors,
               hexController: hexCtrl,
-              onColorChanged: (color) => temp = color,
-              onCancel: () => Navigator.of(ctx).pop(),
-              onSelect: () => Navigator.of(ctx).pop(temp),
+              onColorChanged: (color) {
+                temp = color;
+                onColorChanged?.call(color);
+              },
+              onCancel: () {
+                canceled = true;
+                Navigator.of(ctx).pop();
+              },
+              onClose: () => Navigator.of(ctx).pop(temp),
               onEyedropperRequested: onEyedropperRequested,
             ),
           ),
         ),
       );
+      if (canceled) return null;
+      return result ?? temp;
     }
 
-    return await showDialog<Color>(
+    final result = await showDialog<Color>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Pick color'),
-        content: SingleChildScrollView(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 380),
-            child: _ColorPickerContent(
-              initialColor: initialColor,
-              hexController: hexCtrl,
-              onColorChanged: (color) => temp = color,
-              onEyedropperRequested: onEyedropperRequested,
+      builder: (ctx) => WillPopScope(
+        onWillPop: () async {
+          Navigator.of(ctx).pop(temp);
+          return false;
+        },
+        child: AlertDialog(
+          title: const Text('Pick color'),
+          content: SingleChildScrollView(
+            child: SizedBox(
+              width: 380,
+              child: _ColorPickerContent(
+                initialColor: initialColor,
+                recentColors: recentColors,
+                hexController: hexCtrl,
+                onColorChanged: (color) {
+                  temp = color;
+                  onColorChanged?.call(color);
+                },
+                onEyedropperRequested: onEyedropperRequested,
+              ),
             ),
           ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                canceled = true;
+                Navigator.of(ctx).pop();
+              },
+              child: const Text('Cancel'),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.of(ctx).pop(temp),
-            child: const Text('Select'),
-          ),
-        ],
       ),
     );
+    if (canceled) return null;
+    return result ?? temp;
   } finally {
     hexCtrl.dispose();
   }
@@ -80,18 +103,20 @@ Future<Color?> showAdaptiveColorPicker({
 class _ColorPickerSheet extends StatelessWidget {
   const _ColorPickerSheet({
     required this.initialColor,
+    required this.recentColors,
     required this.hexController,
     required this.onColorChanged,
     required this.onCancel,
-    required this.onSelect,
+    required this.onClose,
     this.onEyedropperRequested,
   });
 
   final Color initialColor;
+  final List<Color> recentColors;
   final TextEditingController hexController;
   final ValueChanged<Color> onColorChanged;
   final VoidCallback onCancel;
-  final VoidCallback onSelect;
+  final VoidCallback onClose;
   final VoidCallback? onEyedropperRequested;
 
   @override
@@ -114,7 +139,7 @@ class _ColorPickerSheet extends StatelessWidget {
                 const Spacer(),
                 IconButton(
                   tooltip: 'Close',
-                  onPressed: onCancel,
+                  onPressed: onClose,
                   icon: const Icon(Icons.close),
                 ),
               ],
@@ -126,6 +151,7 @@ class _ColorPickerSheet extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
               child: _ColorPickerContent(
                 initialColor: initialColor,
+                recentColors: recentColors,
                 hexController: hexController,
                 onColorChanged: onColorChanged,
                 onEyedropperRequested: onEyedropperRequested,
@@ -141,11 +167,6 @@ class _ColorPickerSheet extends StatelessWidget {
                   onPressed: onCancel,
                   child: const Text('Cancel'),
                 ),
-                const SizedBox(width: 8),
-                ElevatedButton(
-                  onPressed: onSelect,
-                  child: const Text('Select'),
-                ),
               ],
             ),
           ),
@@ -158,12 +179,14 @@ class _ColorPickerSheet extends StatelessWidget {
 class _ColorPickerContent extends StatefulWidget {
   const _ColorPickerContent({
     required this.initialColor,
+    required this.recentColors,
     required this.hexController,
     required this.onColorChanged,
     this.onEyedropperRequested,
   });
 
   final Color initialColor;
+  final List<Color> recentColors;
   final TextEditingController hexController;
   final ValueChanged<Color> onColorChanged;
   final VoidCallback? onEyedropperRequested;
@@ -286,6 +309,28 @@ class _ColorPickerContentState extends State<_ColorPickerContent> {
               ),
             ),
             const SizedBox(height: 16),
+            if (widget.recentColors.isNotEmpty) ...[
+              Text(
+                'Recent',
+                style: theme.textTheme.labelMedium?.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final swatch in _uniqueRecentColors(widget.recentColors))
+                    _ColorSwatch(
+                      color: swatch,
+                      selected: swatch.toARGB32() == _currentColor.toARGB32(),
+                      onTap: () => _applyColor(swatch, updateHex: true),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 16),
+            ],
             Text(
               'Swatches',
               style: theme.textTheme.labelMedium?.copyWith(
@@ -310,6 +355,19 @@ class _ColorPickerContentState extends State<_ColorPickerContent> {
       },
     );
   }
+}
+
+List<Color> _uniqueRecentColors(List<Color> colors) {
+  final seen = <int>{};
+  final result = <Color>[];
+  for (final color in colors) {
+    final key = color.toARGB32();
+    if (seen.add(key)) {
+      result.add(Color(key));
+    }
+    if (result.length >= 10) break;
+  }
+  return result;
 }
 
 class _ColorSwatch extends StatelessWidget {
@@ -364,5 +422,4 @@ const List<Color> _swatches = [
   Color(0xFFA855F7),
   Color(0xFFEC4899),
 ];
-
 

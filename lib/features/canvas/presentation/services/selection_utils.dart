@@ -7,6 +7,16 @@ class SelectionUtils {
     if (selectedId == null) return const [];
     final targetIndex = shapes.indexWhere((s) => s.id == selectedId);
     if (targetIndex == -1) return const [];
+    final spatialId = shapes[targetIndex].spatialObjectId;
+    if (spatialId != null) {
+      final indices = <int>[];
+      for (var i = 0; i < shapes.length; i++) {
+        if (shapes[i].spatialObjectId == spatialId) {
+          indices.add(i);
+        }
+      }
+      return indices;
+    }
     final groupId = shapes[targetIndex].groupId;
     if (groupId == null) return [targetIndex];
     final indices = <int>[];

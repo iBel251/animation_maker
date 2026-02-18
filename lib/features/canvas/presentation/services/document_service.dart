@@ -1,14 +1,20 @@
 import 'dart:ui';
 
 import 'package:animation_maker/features/canvas/domain/entities/shape.dart';
+import 'package:animation_maker/features/canvas/domain/entities/object_timeline.dart';
+import 'package:animation_maker/features/canvas/domain/entities/scene_camera.dart';
+import 'package:animation_maker/features/canvas/domain/entities/scene_camera_timeline.dart';
 import 'package:animation_maker/features/canvas/domain/services/quadtree.dart';
-import 'package:animation_maker/features/canvas/domain/entities/raster_stroke.dart';
-
 import 'history_manager.dart';
 
 class DocumentService {
-  DocumentService({Rect quadBoundary = const Rect.fromLTWH(0, 0, 5000, 5000)})
-    : _quadBoundary = quadBoundary {
+  /// Creates a DocumentService with a large world boundary for the QuadTree.
+  ///
+  /// The default boundary spans from -50000 to 50000 in both axes,
+  /// allowing shapes to exist far outside the artboard for an "infinite canvas" feel.
+  DocumentService({
+    Rect quadBoundary = const Rect.fromLTWH(-50000, -50000, 100000, 100000),
+  }) : _quadBoundary = quadBoundary {
     _quadTree = QuadTree(boundary: _quadBoundary);
   }
 
@@ -20,38 +26,46 @@ class DocumentService {
 
   void resetHistory({
     required List<Shape> shapes,
-    required List<RasterStroke> strokes,
     required String? selectedId,
     required List<String> selectedIds,
     required int frameIndex,
     required String activeLayerId,
+    required SceneCameraTimeline sceneCameraTimeline,
+    required ObjectTimeline objectTimeline,
+    required SceneCamera? sceneCamera,
   }) {
     history.reset();
     history.push(
       shapes: shapes,
-      strokes: strokes,
       selectedId: selectedId,
       selectedIds: selectedIds,
       frameIndex: frameIndex,
       activeLayerId: activeLayerId,
+      sceneCameraTimeline: sceneCameraTimeline,
+      objectTimeline: objectTimeline,
+      sceneCamera: sceneCamera,
     );
   }
 
   void pushHistory({
     required List<Shape> shapes,
-    required List<RasterStroke> strokes,
     required String? selectedId,
     required List<String> selectedIds,
     required int frameIndex,
     required String activeLayerId,
+    required SceneCameraTimeline sceneCameraTimeline,
+    required ObjectTimeline objectTimeline,
+    required SceneCamera? sceneCamera,
   }) {
     history.push(
       shapes: shapes,
-      strokes: strokes,
       selectedId: selectedId,
       selectedIds: selectedIds,
       frameIndex: frameIndex,
       activeLayerId: activeLayerId,
+      sceneCameraTimeline: sceneCameraTimeline,
+      objectTimeline: objectTimeline,
+      sceneCamera: sceneCamera,
     );
   }
 
@@ -65,6 +79,3 @@ class DocumentService {
     }
   }
 }
-
-
-

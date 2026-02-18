@@ -1,0 +1,31 @@
+name: RasterEngineBindings
+description: Dart FFI bindings for C++ raster engine
+
+output: lib/core/native/raster_engine_bindings.dart
+
+headers:
+  entry-points:
+    - android/app/src/main/cpp/ffi/raster_engine_ffi.h
+
+compiler-opts:
+  - -Iandroid/app/src/main/cpp
+  - -Iandroid/app/src/main/cpp/core
+  - -Iandroid/app/src/main/cpp/ffi
+  - -std=c++17
+
+filters:
+  include:
+    - RasterEngineHandle
+    - RasterStrokeStyle
+    - RasterPoint
+    - raster_engine_.*
+
+structs:
+  RasterStrokeStyle:
+    rename: RasterStrokeStyle
+  RasterPoint:
+    rename: RasterPoint
+
+functions:
+  prefix: 'raster_engine_'
+  rename: {}

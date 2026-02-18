@@ -1,4 +1,7 @@
+import 'package:animation_maker/features/canvas/presentation/providers/canvas_notifier.dart';
+import 'package:animation_maker/features/canvas/presentation/providers/image_providers.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 Future<void> showEditorMenu({required BuildContext context}) {
   final isCompact = MediaQuery.of(context).size.width < 600;
@@ -17,10 +20,7 @@ Future<void> showEditorMenu({required BuildContext context}) {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            _SheetHeader(
-              title: 'Menu',
-              onClose: () => Navigator.of(ctx).pop(),
-            ),
+            _SheetHeader(title: 'Menu', onClose: () => Navigator.of(ctx).pop()),
             const SizedBox(height: 8),
             const _EditorMenuContent(),
           ],
@@ -47,10 +47,7 @@ Future<void> showEditorMenu({required BuildContext context}) {
 }
 
 class _SheetHeader extends StatelessWidget {
-  const _SheetHeader({
-    required this.title,
-    required this.onClose,
-  });
+  const _SheetHeader({required this.title, required this.onClose});
 
   final String title;
   final VoidCallback onClose;
@@ -61,9 +58,9 @@ class _SheetHeader extends StatelessWidget {
       children: [
         Text(
           title,
-          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.w700,
-              ),
+          style: Theme.of(
+            context,
+          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
         ),
         const Spacer(),
         IconButton(
@@ -76,15 +73,14 @@ class _SheetHeader extends StatelessWidget {
   }
 }
 
-class _EditorMenuContent extends StatefulWidget {
+class _EditorMenuContent extends ConsumerStatefulWidget {
   const _EditorMenuContent();
 
   @override
-  State<_EditorMenuContent> createState() => _EditorMenuContentState();
+  ConsumerState<_EditorMenuContent> createState() => _EditorMenuContentState();
 }
 
-class _EditorMenuContentState extends State<_EditorMenuContent> {
-  bool _onionEnabled = false;
+class _EditorMenuContentState extends ConsumerState<_EditorMenuContent> {
   bool _gridEnabled = false;
 
   @override
@@ -98,21 +94,43 @@ class _EditorMenuContentState extends State<_EditorMenuContent> {
           onTap: () => Navigator.of(context).pop(),
         ),
         SwitchListTile(
-          value: _onionEnabled,
-          onChanged: (value) => setState(() => _onionEnabled = value),
-          title: const Text('Onion skin'),
-          secondary: const Icon(Icons.layers),
-        ),
-        SwitchListTile(
           value: _gridEnabled,
           onChanged: (value) => setState(() => _gridEnabled = value),
           title: const Text('Grid'),
           secondary: const Icon(Icons.grid_on),
         ),
+        SwitchListTile(
+          value: ref.watch(
+            editorViewModelProvider.select(
+              (state) => state.joystickControllerEnabled,
+            ),
+          ),
+          onChanged: (value) {
+            final vm = ref.read(editorViewModelProvider.notifier);
+            final enabled = ref.read(
+              editorViewModelProvider.select(
+                (state) => state.joystickControllerEnabled,
+              ),
+            );
+            if (enabled != value) {
+              vm.toggleJoystickController();
+            }
+          },
+          title: const Text('Joystick controller'),
+          secondary: const Icon(Icons.gamepad),
+        ),
         ListTile(
           leading: const Icon(Icons.image),
           title: const Text('Add image'),
-          onTap: () => Navigator.of(context).pop(),
+          onTap: () async {
+            final imageService = ref.read(imageServiceProvider);
+            final editorVm = ref.read(editorViewModelProvider.notifier);
+            Navigator.of(context).pop();
+            final result = await imageService.pickAndPersistImage();
+            if (result != null) {
+              editorVm.addImageShape(result);
+            }
+          },
         ),
         ListTile(
           leading: const Icon(Icons.movie),

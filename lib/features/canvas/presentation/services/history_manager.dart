@@ -1,24 +1,70 @@
-
 import 'package:animation_maker/features/canvas/domain/entities/shape.dart';
-import 'package:animation_maker/features/canvas/domain/entities/raster_stroke.dart';
-import 'package:perfect_freehand/perfect_freehand.dart';
+import 'package:animation_maker/features/canvas/domain/entities/object_timeline.dart';
+import 'package:animation_maker/features/canvas/domain/entities/scene_camera.dart';
+import 'package:animation_maker/features/canvas/domain/entities/scene_camera_timeline.dart';
+import 'package:animation_maker/features/canvas/domain/entities/selection_types.dart';
 
 class HistorySnapshot {
   const HistorySnapshot({
     required this.shapes,
-    required this.rasterStrokes,
     required this.selectedShapeId,
     required this.selectedShapeIds,
     required this.frameIndex,
     required this.activeLayerId,
+    required this.sceneCameraTimeline,
+    required this.objectTimeline,
+    required this.sceneCamera,
   });
 
   final List<Shape> shapes;
-  final List<RasterStroke> rasterStrokes;
   final String? selectedShapeId;
   final List<String> selectedShapeIds;
   final int frameIndex;
   final String activeLayerId;
+  final SceneCameraTimeline sceneCameraTimeline;
+  final ObjectTimeline objectTimeline;
+  final SceneCamera? sceneCamera;
+
+  ResolvedSelection resolveSelection({
+    required SelectionMode mode,
+    required Set<String> availableIds,
+  }) {
+    var resolvedId =
+        selectedShapeId != null && availableIds.contains(selectedShapeId)
+        ? selectedShapeId
+        : null;
+    var resolvedIds = selectedShapeIds
+        .where(availableIds.contains)
+        .toList(growable: false);
+
+    if (mode == SelectionMode.single) {
+      if (resolvedId == null && resolvedIds.isNotEmpty) {
+        resolvedId = resolvedIds.first;
+      }
+      resolvedIds = resolvedId != null
+          ? List<String>.unmodifiable([resolvedId])
+          : const <String>[];
+    } else if (resolvedId != null && !resolvedIds.contains(resolvedId)) {
+      resolvedIds = List<String>.unmodifiable([resolvedId, ...resolvedIds]);
+    } else {
+      resolvedIds = List<String>.unmodifiable(resolvedIds);
+    }
+
+    return ResolvedSelection(
+      selectedShapeId: resolvedId,
+      selectedShapeIds: resolvedIds,
+    );
+  }
+}
+
+class ResolvedSelection {
+  const ResolvedSelection({
+    required this.selectedShapeId,
+    required this.selectedShapeIds,
+  });
+
+  final String? selectedShapeId;
+  final List<String> selectedShapeIds;
 }
 
 class HistoryManager {
@@ -38,11 +84,13 @@ class HistoryManager {
 
   void push({
     required List<Shape> shapes,
-    required List<RasterStroke> strokes,
     required String? selectedId,
     required List<String> selectedIds,
     required int frameIndex,
     required String activeLayerId,
+    required SceneCameraTimeline sceneCameraTimeline,
+    required ObjectTimeline objectTimeline,
+    required SceneCamera? sceneCamera,
   }) {
     // Truncate redo part
     if (_index + 1 < _stack.length) {
@@ -52,11 +100,13 @@ class HistoryManager {
     _stack.add(
       HistorySnapshot(
         shapes: _cloneShapes(shapes),
-        rasterStrokes: _cloneStrokes(strokes),
         selectedShapeId: selectedId,
         selectedShapeIds: List<String>.unmodifiable(selectedIds),
         frameIndex: frameIndex,
         activeLayerId: activeLayerId,
+        sceneCameraTimeline: sceneCameraTimeline,
+        objectTimeline: objectTimeline,
+        sceneCamera: sceneCamera?.copyWith(),
       ),
     );
     _index = _stack.length - 1;
@@ -83,32 +133,4 @@ class HistoryManager {
 
   List<Shape> _cloneShapes(List<Shape> shapes) =>
       shapes.map((s) => s.copyWith()).toList(growable: false);
-
-  List<RasterStroke> _cloneStrokes(List<RasterStroke> strokes) =>
-      strokes
-          .map(
-            (r) => RasterStroke(
-              points: r.points
-                  .map(
-                    (p) => PointVector(
-                      p.x,
-                      p.y,
-                      p.pressure,
-                    ),
-                  )
-                  .toList(growable: false),
-              color: r.color,
-              strokeWidth: r.strokeWidth,
-              opacity: r.opacity,
-              thinning: r.thinning,
-              smoothing: r.smoothing,
-              streamline: r.streamline,
-              simulatePressure: r.simulatePressure,
-              brushType: r.brushType,
-            ),
-          )
-          .toList(growable: false);
 }
-
-
-

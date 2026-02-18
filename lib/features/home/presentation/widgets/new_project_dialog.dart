@@ -15,15 +15,6 @@ class NewProjectDialog extends ConsumerStatefulWidget {
 }
 
 class _NewProjectDialogState extends ConsumerState<NewProjectDialog> {
-  static const List<_CanvasPreset> _canvasPresets = [
-    _CanvasPreset(label: 'YouTube (1080p)', width: 1920, height: 1080),
-    _CanvasPreset(label: 'YouTube (720p)', width: 1280, height: 720),
-    _CanvasPreset(label: 'Shorts (1080)', width: 1080, height: 1920),
-    _CanvasPreset(label: 'Shorts (720)', width: 720, height: 1280),
-    _CanvasPreset(label: 'Instagram (16:9)', width: 1920, height: 1080),
-    _CanvasPreset(label: 'Instagram (1:1)', width: 1080, height: 1080),
-    _CanvasPreset(label: '4:3', width: 1440, height: 1080),
-  ];
   static const List<Color> _backgroundOptions = [
     Color(0xFFFFFFFF),
     Color(0xFFFDE68A),
@@ -34,13 +25,10 @@ class _NewProjectDialogState extends ConsumerState<NewProjectDialog> {
   ];
 
   late final TextEditingController _projectNameController;
-  late final TextEditingController _widthController;
-  late final TextEditingController _heightController;
 
   double _fpsSliderValue = 24;
   int _fps = 24;
-  String _presetLabel = 'Custom';
-  bool _transparentBackground = false;
+  bool _transparentBackground = true;
   Color _backgroundColor = _backgroundOptions.first;
   bool _isSaving = false;
 
@@ -48,15 +36,11 @@ class _NewProjectDialogState extends ConsumerState<NewProjectDialog> {
   void initState() {
     super.initState();
     _projectNameController = TextEditingController(text: 'Untitled Project');
-    _widthController = TextEditingController(text: '1920');
-    _heightController = TextEditingController(text: '1080');
   }
 
   @override
   void dispose() {
     _projectNameController.dispose();
-    _widthController.dispose();
-    _heightController.dispose();
     super.dispose();
   }
 
@@ -84,19 +68,11 @@ class _NewProjectDialogState extends ConsumerState<NewProjectDialog> {
   CanvasDocument _buildDocument() {
     final name = _projectNameController.text.trim();
     final title = name.isEmpty ? 'Untitled Project' : name;
-    final width = _parseDimension(
-      _widthController.text,
-      kDefaultCanvasSize.width,
-    );
-    final height = _parseDimension(
-      _heightController.text,
-      kDefaultCanvasSize.height,
-    );
     final background = _resolveBackground();
     return CanvasDocument.singleLayer(
       id: IdGenerator.documentId(),
       title: title,
-      size: Size(width, height),
+      size: kDefaultCanvasSize,
       background: background,
       fps: _fps.toDouble(),
       frameCount: kDefaultFrameCount,
@@ -108,12 +84,6 @@ class _NewProjectDialogState extends ConsumerState<NewProjectDialog> {
       return const CanvasBackground.transparent();
     }
     return CanvasBackground.solid(_backgroundColor);
-  }
-
-  double _parseDimension(String raw, double fallback) {
-    final value = double.tryParse(raw.trim());
-    if (value == null || value <= 0) return fallback;
-    return value;
   }
 
   @override
@@ -265,88 +235,6 @@ class _NewProjectDialogState extends ConsumerState<NewProjectDialog> {
             ),
             const SizedBox(height: 18),
             sectionCard(
-              title: 'Canvas size',
-              subtitle: 'Pick a preset or enter a custom size.',
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  DropdownButtonFormField<String>(
-                    value: _presetLabel,
-                    decoration: inputDecoration('Preset'),
-                    items: [
-                      const DropdownMenuItem(
-                        value: 'Custom',
-                        child: Text('Custom'),
-                      ),
-                      ..._canvasPresets.map(
-                        (preset) => DropdownMenuItem(
-                          value: preset.label,
-                          child: Text(preset.label),
-                        ),
-                      ),
-                    ],
-                    onChanged: (value) {
-                      if (value == null) return;
-                      setState(() {
-                        _presetLabel = value;
-                        if (value != 'Custom') {
-                          final preset = _canvasPresets.firstWhere(
-                            (option) => option.label == value,
-                          );
-                          _widthController.text = preset.width.toString();
-                          _heightController.text = preset.height.toString();
-                        }
-                      });
-                    },
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _widthController,
-                          keyboardType: TextInputType.number,
-                          decoration: inputDecoration('Width', hintText: 'px'),
-                          onChanged: (_) {
-                            setState(() => _presetLabel = 'Custom');
-                          },
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: TextField(
-                          controller: _heightController,
-                          keyboardType: TextInputType.number,
-                          decoration: inputDecoration('Height', hintText: 'px'),
-                          onChanged: (_) {
-                            setState(() => _presetLabel = 'Custom');
-                          },
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      const Text(
-                        'Aspect ratio',
-                        style: TextStyle(fontSize: 12, color: muted),
-                      ),
-                      const Spacer(),
-                      Text(
-                        _aspectRatioLabel(),
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w600,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 18),
-            sectionCard(
               title: 'Background',
               subtitle: 'Choose a starting background color.',
               child: Column(
@@ -485,26 +373,6 @@ class _NewProjectDialogState extends ConsumerState<NewProjectDialog> {
     );
   }
 
-  String _aspectRatioLabel() {
-    final width = int.tryParse(_widthController.text);
-    final height = int.tryParse(_heightController.text);
-    if (width == null || height == null || height == 0) return '--';
-    final divisor = _gcd(width, height);
-    if (divisor == 0) return '--';
-    return '${width ~/ divisor}:${height ~/ divisor}';
-  }
-
-  int _gcd(int a, int b) {
-    var valueA = a.abs();
-    var valueB = b.abs();
-    while (valueB != 0) {
-      final temp = valueB;
-      valueB = valueA % valueB;
-      valueA = temp;
-    }
-    return valueA;
-  }
-
   int _snapFps(double value) {
     const int minFps = 1;
     const int maxFps = 30;
@@ -559,16 +427,4 @@ class _BackgroundSwatch extends StatelessWidget {
       ),
     );
   }
-}
-
-class _CanvasPreset {
-  const _CanvasPreset({
-    required this.label,
-    required this.width,
-    required this.height,
-  });
-
-  final String label;
-  final int width;
-  final int height;
 }

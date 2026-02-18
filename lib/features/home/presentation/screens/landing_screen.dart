@@ -4,7 +4,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:animation_maker/features/canvas/domain/entities/canvas_document_summary.dart';
 import 'package:animation_maker/features/canvas/presentation/providers/repository_providers.dart';
 import 'package:animation_maker/features/canvas/presentation/screens/canvas_screen.dart';
+import 'package:animation_maker/features/home/presentation/services/project_actions_service.dart';
 import 'package:animation_maker/features/home/presentation/widgets/new_project_dialog.dart';
+import 'package:animation_maker/features/home/presentation/widgets/rename_project_dialog.dart';
 
 enum LandingSection { projects, assets }
 
@@ -115,8 +117,6 @@ class _LandingScreenState extends ConsumerState<LandingScreen> {
       key: const ValueKey('home'),
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 120),
       children: [
-        _HeroCard(accent: accent),
-        const SizedBox(height: 18),
         _SectionHeader(
           title: 'Library',
           subtitle: 'Jump back into the work you were shaping.',
@@ -177,6 +177,9 @@ class _LandingScreenState extends ConsumerState<LandingScreen> {
                         panel: panel,
                         muted: muted,
                         onOpen: (project) => _openProject(project.id),
+                        onDelete: (project) => _deleteProject(project),
+                        onDuplicate: (project) => _duplicateProject(project),
+                        onRename: (project) => _renameProject(project),
                       );
                     },
                   )
@@ -242,6 +245,123 @@ class _LandingScreenState extends ConsumerState<LandingScreen> {
     );
     if (!mounted) return;
     _refreshProjects();
+  }
+
+  Future<void> _deleteProject(CanvasDocumentSummary project) async {
+    // Show confirmation dialog
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+        ),
+        title: const Text(
+          'Delete Project',
+          style: TextStyle(fontWeight: FontWeight.w700, fontSize: 18),
+        ),
+        content: Text(
+          'Are you sure you want to delete "${project.title}"? This action cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text(
+              'Cancel',
+              style: TextStyle(color: Color(0xFF6B7280)),
+            ),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: FilledButton.styleFrom(
+              backgroundColor: Colors.red,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    final service = ProjectActionsService(ref.read(canvasRepositoryProvider));
+    final success = await service.deleteProject(project.id);
+
+    if (!mounted) return;
+
+    if (success) {
+      _refreshProjects();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Deleted "${project.title}"'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Failed to delete project'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
+  Future<void> _duplicateProject(CanvasDocumentSummary project) async {
+    final service = ProjectActionsService(ref.read(canvasRepositoryProvider));
+    final newId = await service.duplicateProject(project.id);
+
+    if (!mounted) return;
+
+    if (newId != null) {
+      _refreshProjects();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Duplicated "${project.title}"'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Failed to duplicate project'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
+  Future<void> _renameProject(CanvasDocumentSummary project) async {
+    final newName = await showDialog<String>(
+      context: context,
+      builder: (context) => RenameProjectDialog(currentName: project.title),
+    );
+
+    if (newName == null || newName.isEmpty || !mounted) return;
+
+    final service = ProjectActionsService(ref.read(canvasRepositoryProvider));
+    final success = await service.renameProject(project.id, newName);
+
+    if (!mounted) return;
+
+    if (success) {
+      _refreshProjects();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Renamed to "$newName"'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Failed to rename project'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
   }
 
   Widget _buildAuxBody(
@@ -448,43 +568,251 @@ class _LandingDrawer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    const accent = Color(0xFF1D4ED8);
     return Drawer(
-      child: ListView(
-        padding: EdgeInsets.zero,
-        children: [
-          DrawerHeader(
-            decoration: const BoxDecoration(
-              color: Color(0xFF1D4ED8),
-            ),
-            child: Align(
-              alignment: Alignment.bottomLeft,
-              child: Text(
-                'Animation Maker',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 20,
-                  fontWeight: FontWeight.w700,
-                  fontFamily: 'Georgia',
+      child: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            colors: [
+              Color(0xFFF9F3E9),
+              Color(0xFFEFE2D2),
+            ],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+        ),
+        child: SafeArea(
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+            children: [
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(20),
+                  gradient: const LinearGradient(
+                    colors: [
+                      Color(0xFF1D4ED8),
+                      Color(0xFF2563EB),
+                      Color(0xFF38BDF8),
+                    ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.18),
+                      blurRadius: 18,
+                      offset: const Offset(0, 10),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: 44,
+                      height: 44,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.2),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: const Icon(
+                        Icons.motion_photos_auto,
+                        color: Colors.white,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: const [
+                          Text(
+                            'Animation Maker',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 18,
+                              fontWeight: FontWeight.w700,
+                              fontFamily: 'Georgia',
+                            ),
+                          ),
+                          SizedBox(height: 4),
+                          Text(
+                            'Storyboards & motion labs',
+                            style: TextStyle(
+                              color: Colors.white70,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
               ),
-            ),
+              const SizedBox(height: 18),
+              const _DrawerSectionTitle(title: 'Workspace'),
+              const SizedBox(height: 8),
+              _DrawerNavItem(
+                icon: Icons.palette_outlined,
+                title: 'Themes',
+                subtitle: 'Match your studio mood',
+                accent: accent,
+                onTap: () => Navigator.of(context).pop(),
+              ),
+              const SizedBox(height: 10),
+              _DrawerNavItem(
+                icon: Icons.folder_open,
+                title: 'Local storage',
+                subtitle: 'Browse saved projects',
+                accent: accent,
+                onTap: () => Navigator.of(context).pop(),
+              ),
+              const SizedBox(height: 10),
+              _DrawerNavItem(
+                icon: Icons.cloud,
+                title: 'Cloud sync',
+                subtitle: 'Keep frames backed up',
+                accent: accent,
+                onTap: () => Navigator.of(context).pop(),
+              ),
+              const SizedBox(height: 18),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.9),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: const Color(0xFFE6E1D7)),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 36,
+                      height: 36,
+                      decoration: BoxDecoration(
+                        color: accent.withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Icon(Icons.cloud_done, color: accent),
+                    ),
+                    const SizedBox(width: 10),
+                    const Expanded(
+                      child: Text(
+                        'Sync ready',
+                        style: TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: accent.withOpacity(0.14),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Text(
+                        'Online',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          color: accent,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
-          ListTile(
-            leading: const Icon(Icons.palette_outlined),
-            title: const Text('Themes'),
-            onTap: () => Navigator.of(context).pop(),
+        ),
+      ),
+    );
+  }
+}
+
+class _DrawerSectionTitle extends StatelessWidget {
+  const _DrawerSectionTitle({required this.title});
+
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      title,
+      style: const TextStyle(
+        fontSize: 12,
+        fontWeight: FontWeight.w700,
+        letterSpacing: 0.8,
+        color: Color(0xFF6B7280),
+      ),
+    );
+  }
+}
+
+class _DrawerNavItem extends StatelessWidget {
+  const _DrawerNavItem({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.accent,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final Color accent;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final borderRadius = BorderRadius.circular(16);
+    return Material(
+      color: Colors.white.withOpacity(0.9),
+      borderRadius: borderRadius,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: borderRadius,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: accent.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(icon, color: accent),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 14,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      subtitle,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Color(0xFF6B7280),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right, color: Color(0xFF94A3B8)),
+            ],
           ),
-          ListTile(
-            leading: const Icon(Icons.folder_open),
-            title: const Text('Local storage'),
-            onTap: () => Navigator.of(context).pop(),
-          ),
-          ListTile(
-            leading: const Icon(Icons.cloud),
-            title: const Text('Cloud sync'),
-            onTap: () => Navigator.of(context).pop(),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -520,99 +848,6 @@ class _LogoBadge extends StatelessWidget {
   }
 }
 
-class _HeroCard extends StatelessWidget {
-  const _HeroCard({required this.accent});
-
-  final Color accent;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(24),
-        gradient: const LinearGradient(
-          colors: [
-            Color(0xFFFDE68A),
-            Color(0xFFFCA5A5),
-            Color(0xFF93C5FD),
-          ],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-      ),
-      child: Stack(
-        children: [
-          Positioned(
-            right: 8,
-            top: 6,
-            child: Container(
-              width: 52,
-              height: 52,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: Colors.white.withOpacity(0.45),
-              ),
-            ),
-          ),
-          Positioned(
-            right: 48,
-            bottom: 4,
-            child: Container(
-              width: 76,
-              height: 76,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: Colors.white.withOpacity(0.25),
-              ),
-            ),
-          ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Sketch, animate, ship.',
-                style: TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.w700,
-                  fontFamily: 'Georgia',
-                ),
-              ),
-              const SizedBox(height: 6),
-              const Text(
-                'Your last frames are saved automatically. Jump in and keep the motion going.',
-                style: TextStyle(fontSize: 14, height: 1.35),
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 6,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.85),
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: const Text(
-                      'Auto-save active',
-                      style: TextStyle(fontWeight: FontWeight.w600),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Icon(Icons.circle, size: 8, color: accent),
-                  const SizedBox(width: 6),
-                  const Text('Sync ready'),
-                ],
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
 
 class _SectionHeader extends StatelessWidget {
   const _SectionHeader({required this.title, required this.subtitle});
@@ -711,6 +946,9 @@ class _ProjectsGrid extends StatelessWidget {
     required this.panel,
     required this.muted,
     required this.onOpen,
+    required this.onDelete,
+    required this.onDuplicate,
+    required this.onRename,
   });
 
   final List<CanvasDocumentSummary> projects;
@@ -718,6 +956,9 @@ class _ProjectsGrid extends StatelessWidget {
   final Color panel;
   final Color muted;
   final ValueChanged<CanvasDocumentSummary> onOpen;
+  final ValueChanged<CanvasDocumentSummary> onDelete;
+  final ValueChanged<CanvasDocumentSummary> onDuplicate;
+  final ValueChanged<CanvasDocumentSummary> onRename;
 
   @override
   Widget build(BuildContext context) {
@@ -763,14 +1004,27 @@ class _ProjectsGrid extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Container(
-                    width: 42,
-                    height: 42,
-                    decoration: BoxDecoration(
-                      color: accent.withOpacity(0.15),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Icon(Icons.movie_creation_outlined, color: accent),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        width: 42,
+                        height: 42,
+                        decoration: BoxDecoration(
+                          color: accent.withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Icon(Icons.movie_creation_outlined, color: accent),
+                      ),
+                      const Spacer(),
+                      _ProjectMenuButton(
+                        project: project,
+                        muted: muted,
+                        onDelete: () => onDelete(project),
+                        onDuplicate: () => onDuplicate(project),
+                        onRename: () => onRename(project),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 10),
                   Text(
@@ -802,6 +1056,86 @@ class _ProjectsGrid extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+class _ProjectMenuButton extends StatelessWidget {
+  const _ProjectMenuButton({
+    required this.project,
+    required this.muted,
+    required this.onDelete,
+    required this.onDuplicate,
+    required this.onRename,
+  });
+
+  final CanvasDocumentSummary project;
+  final Color muted;
+  final VoidCallback onDelete;
+  final VoidCallback onDuplicate;
+  final VoidCallback onRename;
+
+  @override
+  Widget build(BuildContext context) {
+    return PopupMenuButton<String>(
+      icon: Icon(Icons.more_vert, color: muted, size: 20),
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints(),
+      style: IconButton.styleFrom(
+        padding: const EdgeInsets.all(4),
+        minimumSize: const Size(28, 28),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+      ),
+      position: PopupMenuPosition.under,
+      onSelected: (value) {
+        switch (value) {
+          case 'rename':
+            onRename();
+            break;
+          case 'duplicate':
+            onDuplicate();
+            break;
+          case 'delete':
+            onDelete();
+            break;
+        }
+      },
+      itemBuilder: (context) => [
+        const PopupMenuItem<String>(
+          value: 'rename',
+          child: Row(
+            children: [
+              Icon(Icons.edit_outlined, size: 18),
+              SizedBox(width: 12),
+              Text('Rename'),
+            ],
+          ),
+        ),
+        const PopupMenuItem<String>(
+          value: 'duplicate',
+          child: Row(
+            children: [
+              Icon(Icons.copy_outlined, size: 18),
+              SizedBox(width: 12),
+              Text('Duplicate'),
+            ],
+          ),
+        ),
+        const PopupMenuDivider(),
+        const PopupMenuItem<String>(
+          value: 'delete',
+          child: Row(
+            children: [
+              Icon(Icons.delete_outline, size: 18, color: Colors.red),
+              SizedBox(width: 12),
+              Text('Delete', style: TextStyle(color: Colors.red)),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }

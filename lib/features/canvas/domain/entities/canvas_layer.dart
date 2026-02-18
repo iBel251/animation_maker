@@ -22,7 +22,29 @@ class CanvasLayer {
   final BlendMode blendMode;
 
   CanvasFrame frameAt(int index) {
-    return frames[index] ?? CanvasFrame(index: index);
+    final exact = frames[index];
+    if (exact != null) return exact;
+
+    CanvasFrame? closestPreviousNonEmpty;
+    CanvasFrame? closestPreviousAny;
+    for (final frame in frames.values) {
+      if (frame.index > index) continue;
+      if (closestPreviousAny == null ||
+          frame.index > closestPreviousAny.index) {
+        closestPreviousAny = frame;
+      }
+      if (frame.shapes.isNotEmpty &&
+          (closestPreviousNonEmpty == null ||
+              frame.index > closestPreviousNonEmpty.index)) {
+        closestPreviousNonEmpty = frame;
+      }
+    }
+
+    final source = closestPreviousNonEmpty ?? closestPreviousAny;
+    if (source != null) {
+      return source.copyWith(index: index);
+    }
+    return CanvasFrame(index: index);
   }
 
   CanvasLayer upsertFrame(CanvasFrame frame) {

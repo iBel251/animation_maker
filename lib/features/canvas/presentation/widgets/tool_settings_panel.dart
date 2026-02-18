@@ -60,7 +60,9 @@ class _ShapeSettings extends StatelessWidget {
         const SizedBox(height: 12),
         CustomSlider(
           label: 'Stroke Width',
-          value: state.brushThickness,
+          value: state.activeTool == EditorTool.eraser
+              ? state.eraserSettings.thickness
+              : state.brushSettings[state.currentBrush]!.thickness,
           min: 0.5,
           max: 300,
           unit: 'px',
@@ -71,7 +73,9 @@ class _ShapeSettings extends StatelessWidget {
         const SizedBox(height: 12),
         CustomSlider(
           label: 'Opacity',
-          value: state.brushOpacity,
+          value: state.activeTool == EditorTool.eraser
+              ? state.eraserSettings.opacity
+              : state.brushSettings[state.currentBrush]!.opacity,
           min: 0.05,
           max: 1.0,
           unit: '',
@@ -82,6 +86,10 @@ class _ShapeSettings extends StatelessWidget {
         _FillColorPicker(
           current: state.shapeFillColor,
           onChanged: vm.setShapeFillColor,
+          recentColors: state.document.recentColors
+              .map((value) => Color(value))
+              .toList(growable: false),
+          onColorCommitted: vm.recordProjectColor,
         ),
       ],
     );
@@ -100,6 +108,7 @@ class _SelectSettings extends StatelessWidget {
     final enabled = state.pivotSnapEnabled;
     final strength = state.pivotSnapStrength;
     final flipPivot = state.pivotFlipWithObject;
+    final scaleStroke = state.strokeScaleWithShape;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -113,10 +122,12 @@ class _SelectSettings extends StatelessWidget {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text(
-              'Pivot snap',
-              style: theme.textTheme.labelSmall?.copyWith(
-                fontWeight: FontWeight.w600,
+            Flexible(
+              child: Text(
+                'Pivot snap',
+                style: theme.textTheme.labelSmall?.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ),
             Switch(
@@ -158,14 +169,40 @@ class _SelectSettings extends StatelessWidget {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text(
-              'Pivot flips with shape',
-              style: theme.textTheme.labelSmall?.copyWith(
-                fontWeight: FontWeight.w600,
+            Flexible(
+              child: Text(
+                'Pivot flips with shape',
+                style: theme.textTheme.labelSmall?.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ),
             Switch(value: flipPivot, onChanged: vm.setPivotFlipWithObject),
           ],
+        ),
+        const SizedBox(height: 12),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Flexible(
+              child: Text(
+                'Scale stroke with shape',
+                style: theme.textTheme.labelSmall?.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            Switch(value: scaleStroke, onChanged: vm.setStrokeScaleWithShape),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Text(
+          scaleStroke
+              ? 'Stroke thins as you stretch the shape.'
+              : 'Stroke width stays constant while resizing.',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: AppColors.grey600,
+          ),
         ),
       ],
     );
@@ -193,7 +230,7 @@ class _BrushSettings extends StatelessWidget {
         const SizedBox(height: 12),
         CustomSlider(
           label: 'Thickness',
-          value: state.brushThickness,
+          value: state.brushSettings[state.currentBrush]!.thickness,
           min: 0.5,
           max: 300,
           unit: 'px',
@@ -204,7 +241,7 @@ class _BrushSettings extends StatelessWidget {
         const SizedBox(height: 12),
         CustomSlider(
           label: 'Opacity',
-          value: state.brushOpacity,
+          value: state.brushSettings[state.currentBrush]!.opacity,
           min: 0.05,
           max: 1.0,
           unit: '',
@@ -214,7 +251,7 @@ class _BrushSettings extends StatelessWidget {
         const SizedBox(height: 12),
         CustomSlider(
           label: 'Smoothness',
-          value: state.brushSmoothness,
+          value: state.brushSettings[state.currentBrush]!.smoothness,
           min: 0.0,
           max: 1.0,
           unit: '',
@@ -227,10 +264,17 @@ class _BrushSettings extends StatelessWidget {
 }
 
 class _FillColorPicker extends StatelessWidget {
-  const _FillColorPicker({required this.current, required this.onChanged});
+  const _FillColorPicker({
+    required this.current,
+    required this.onChanged,
+    required this.recentColors,
+    this.onColorCommitted,
+  });
 
   final Color? current;
   final ValueChanged<Color?> onChanged;
+  final List<Color> recentColors;
+  final ValueChanged<Color>? onColorCommitted;
 
   @override
   Widget build(BuildContext context) {
@@ -250,13 +294,19 @@ class _FillColorPicker extends StatelessWidget {
           children: [
             GestureDetector(
               onTap: () async {
+                final initial = color ?? AppColors.white;
                 final picked = await showAdaptiveColorPicker(
                   context: context,
-                  initialColor: color ?? AppColors.white,
+                  initialColor: initial,
+                  recentColors: recentColors,
+                  onColorChanged: (value) => onChanged(value),
                 );
-                if (picked != null) {
-                  onChanged(picked);
+                if (picked == null) {
+                  onChanged(color);
+                  return;
                 }
+                onChanged(picked);
+                onColorCommitted?.call(picked);
               },
               child: Container(
                 width: 32,
@@ -281,6 +331,3 @@ class _FillColorPicker extends StatelessWidget {
     );
   }
 }
-
-
-

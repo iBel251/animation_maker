@@ -31,13 +31,23 @@ class EditorClipboard {
 
   Shape _offsetShape(Shape shape, Offset delta, String newId) {
     final newBounds = shape.bounds?.shift(delta);
+    final newContours = shape.contours.isNotEmpty
+        ? shape.contours
+            .map(
+              (c) => c.map((p) => p + delta).toList(growable: false),
+            )
+            .toList(growable: false)
+        : null;
     final newPoints = shape.points.isNotEmpty
         ? shape.points.map((p) => p + delta).toList(growable: false)
         : null;
     return shape.copyWith(
       id: newId,
       bounds: newBounds,
-      points: newPoints ?? shape.points.toList(),
+      points: newContours != null
+          ? newContours.first
+          : (newPoints ?? shape.points.toList()),
+      contours: newContours,
       translation: shape.translation + delta,
     );
   }

@@ -31,6 +31,11 @@ const List<ShapeOption> kShapeOptions = [
     icon: Icons.change_history,
     label: 'Triangle',
   ),
+  ShapeOption(
+    kind: ShapeKind.pointPath,
+    icon: Icons.timeline,
+    label: 'Point Path',
+  ),
 ];
 
 ShapeOption shapeOptionFor(ShapeKind kind) {

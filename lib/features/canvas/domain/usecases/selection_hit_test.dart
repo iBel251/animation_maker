@@ -3,6 +3,8 @@ import 'dart:ui';
 
 import 'package:animation_maker/features/canvas/domain/entities/shape.dart';
 import 'package:animation_maker/features/canvas/domain/entities/transform_handle.dart';
+import 'package:animation_maker/features/canvas/domain/usecases/selection_bounds.dart';
+import 'package:animation_maker/features/canvas/domain/usecases/selection_handle_metrics.dart';
 import 'package:vector_math/vector_math_64.dart' show Matrix4, Vector3;
 
 HandleHit? hitTestHandle(
@@ -10,16 +12,29 @@ HandleHit? hitTestHandle(
   Offset posCanvas,
   double viewportScale, {
   required Rect canvasBounds,
+  required double brushSmoothness,
+  required bool strokeScaleWithShape,
 }) {
-  final base = shape.bounds ?? boundsFromPoints(shape.points);
+  final base = shape.localBounds ??
+      selectionBoundsForShape(
+        shape,
+        brushSmoothness: brushSmoothness,
+        strokeScaleWithShape: strokeScaleWithShape,
+      );
   if (base == null) return null;
+  final selectionBounds = selectionBoundsForShape(
+        shape,
+        brushSmoothness: brushSmoothness,
+        strokeScaleWithShape: strokeScaleWithShape,
+      ) ??
+      base;
   final matrix = shape.matrixForRect(base);
-  final corners = transformedCorners(base, matrix);
+  final corners = transformedCorners(selectionBounds, matrix);
   final center = Offset(
     (corners[0].dx + corners[2].dx) / 2,
     (corners[0].dy + corners[2].dy) / 2,
   );
-  final handleSize = 12 / viewportScale;
+  final handleSize = selectionHandleCanvasSize(viewportScale);
   final half = handleSize / 2;
   final pivotRadius = handleSize * 0.8; // slightly larger hit for pivot
   final safeBounds = canvasBounds.deflate(half);
@@ -181,20 +196,27 @@ Offset _rotationHandlePosition({
   required double viewportScale,
   required Rect canvasBounds,
 }) {
-  const double baseOffset = 20.0;
+  final baseOffset = selectionHandleRotationOffset(viewportScale);
   Offset? fallback;
   for (final edgeCenter in edgeCenters) {
     final dir = edgeCenter - center;
     final len = dir.distance;
     if (len <= 0) continue;
     final norm = dir / len;
-    final candidate = center + norm * (len + baseOffset / viewportScale);
+    final candidate = center + norm * (len + baseOffset);
     fallback ??= candidate;
     if (canvasBounds.contains(candidate)) {
       return candidate;
     }
   }
-  return fallback ?? center;
+  return _clampOffsetToRect(fallback ?? center, canvasBounds);
+}
+
+Offset _clampOffsetToRect(Offset value, Rect rect) {
+  return Offset(
+    value.dx.clamp(rect.left, rect.right),
+    value.dy.clamp(rect.top, rect.bottom),
+  );
 }
 
 
